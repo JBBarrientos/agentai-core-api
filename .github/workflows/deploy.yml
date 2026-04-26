@@ -34,9 +34,9 @@ jobs:
       # 5. Tag image for ECR
       - name: Tag image
         run: |
-          docker tag agentai:latest ${{ steps.login-ecr.outputs.registry }}/agentai:latest
+          docker tag agentai:latest ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
 
       # 6. Push to ECR
       - name: Push image
         run: |
-          docker push ${{ steps.login-ecr.outputs.registry }}/agentai:latest
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
