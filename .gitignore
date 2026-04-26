@@ -1,6 +1,7 @@
 # Visual Studio
 .vs/
 .vscode/
+.config/
 # Build outputs
 bin/
 obj/
