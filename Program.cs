@@ -1,8 +1,20 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using AgentAI.Modules.Health;
 using AgentAI.Data;
+using AgentAI.Extensions;
+using AgentAI.Modules.Authentication;
+using AgentAI.Modules.Authentication.Cognito;
+using Amazon.CognitoIdentityProvider;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// This loads secrets in Development automatically — but only if your project has a UserSecretsId
+// Make sure this is present:
+builder.Configuration
+    .AddJsonFile("appsettings.json", optional: false)
+    .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true)
+    .AddUserSecrets<Program>(optional: true)  // 👈 Add this explicitly
+    .AddEnvironmentVariables();
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -13,9 +25,21 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHealthModule();
+builder.Services.AddAuthenticationModule(builder.Configuration);
+builder.Services.AddCognitoAuthentication(builder.Configuration);
+
+builder.Services.Configure<CognitoOptions>(
+    builder.Configuration.GetSection("Cognito"));
+
+builder.Services.AddScoped<AuthenticationService>();
+builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
 
 var app = builder.Build();
+app.UseGlobalExceptionHandler();
+app.UseAuthentication(); 
+app.UseAuthorization();
 app.MapHealthModule();
+app.MapAuthenticationModule();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -44,8 +68,15 @@ app.MapGet("/weatherforecast", () =>
     return forecast;
 })
 .WithName("GetWeatherForecast")
-.WithOpenApi();
+.WithOpenApi()
+.RequireAuthorization();
 
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
 app.Run();
 
 internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)

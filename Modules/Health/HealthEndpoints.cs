@@ -6,17 +6,19 @@ public static class HealthEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/health");
+        var group = app.MapGroup("/health").AllowAnonymous();
 
         group.MapGet("/live", () =>
             Results.Ok(new { status = "alive" })
         );
 
-        group.MapGet("/ready", async (AppDbContext db) =>
+        group.MapGet("/ready", async (HealthService health) =>
         {
-            var canConnect = await db.Database.CanConnectAsync();
-            return canConnect ? Results.Ok(new { status = true }) : Results.Problem("Database unreachable");
-        });
+            var canConnect = await health.IsDatabaseReadyAsync();
 
+            return canConnect
+                ? Results.Ok(new { status = true })
+                : Results.Problem("Database unreachable");
+        });
     }
 }

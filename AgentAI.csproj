@@ -6,6 +6,8 @@
 		<UserSecretsId>9c0d581a-e541-402f-9f25-6de2943207ab</UserSecretsId>
 	</PropertyGroup>
 	<ItemGroup>
+		<PackageReference Include="AWSSDK.CognitoIdentityProvider" Version="4.0.8.2" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.14" />
 		<PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.14" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.14">
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
