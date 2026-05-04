@@ -2,6 +2,7 @@
 using AgentAI.Modules.Health;
 using AgentAI.Data;
 using AgentAI.Extensions;
+using AgentAI.Modules.Tickets;
 using AgentAI.Modules.Authentication;
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
@@ -25,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHealthModule();
+builder.Services.AddTicketModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
@@ -39,6 +41,7 @@ app.UseGlobalExceptionHandler();
 app.UseAuthentication(); 
 app.UseAuthorization();
 app.MapHealthModule();
+app.MapTicketModule();
 app.MapAuthenticationModule();
 
 // Configure the HTTP request pipeline.
