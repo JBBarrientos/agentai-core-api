@@ -35,11 +35,20 @@ builder.Services.Configure<CognitoOptions>(
 
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
-
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
 app.UseAuthentication(); 
 app.UseAuthorization();
+app.UseCors("AllowAll");
 app.MapHealthModule();
 app.MapTicketModule();
 app.MapAuthenticationModule();
