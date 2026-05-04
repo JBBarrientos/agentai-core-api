@@ -46,9 +46,9 @@ builder.Services.AddCors(options =>
 });
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
+app.UseCors("AllowAll");
 app.UseAuthentication(); 
 app.UseAuthorization();
-app.UseCors("AllowAll");
 app.MapHealthModule();
 app.MapTicketModule();
 app.MapAuthenticationModule();
