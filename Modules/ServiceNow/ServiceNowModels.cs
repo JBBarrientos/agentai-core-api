@@ -12,7 +12,8 @@ public sealed record ServiceNowIncident(
     int Priority,
     string PriorityLabel,
     DateTime? OpenedAt,
-    DateTime? UpdatedAt
+    DateTime? UpdatedAt,
+    DateTime? ResolvedAt
 );
 
 public sealed record ServiceNowTokenResponse(

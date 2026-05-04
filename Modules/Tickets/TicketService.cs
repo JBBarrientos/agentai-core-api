@@ -116,6 +116,7 @@ public class TicketService : ITicketService
         ticket.PriorityLabel = incident.PriorityLabel;
         ticket.OpenedAt = incident.OpenedAt ?? DateTime.UtcNow;
         ticket.UpdatedAt = incident.UpdatedAt ?? DateTime.UtcNow;
+        ticket.ResolvedAt = incident.ResolvedAt;
         ticket.LastSyncedAt = DateTime.UtcNow;
     }
 }

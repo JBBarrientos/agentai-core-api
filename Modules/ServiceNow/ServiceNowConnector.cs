@@ -95,7 +95,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         url.Append(baseUrl);
         url.Append("/api/now/table/");
         url.Append(Uri.EscapeDataString(table));
-        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,state,urgency,opened_at,sys_updated_on");
+        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,incident_state,urgency,opened_at,sys_updated_on,resolved_at,closed_at");
         url.Append("&sysparm_query=");
         url.Append(Uri.EscapeDataString(string.IsNullOrWhiteSpace(query) ? "ORDERBYDESCsys_updated_on" : query));
         url.Append("&sysparm_limit=");
@@ -124,12 +124,13 @@ public sealed class ServiceNowConnector : IServiceNowConnector
             var desc = GetDescription(item);
             if (string.IsNullOrWhiteSpace(desc))
                 desc = await GetLatestCustomerCommentAsync(sysId, ct);
-            var state = item.TryGetProperty("state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
+            var state = NormalizeState(item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0);
             var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
             var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
             var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
+            var resolvedAt = GetResolvedAt(item);
 
-            list.Add(new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), openedAt, updatedAt));
+            list.Add(new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), openedAt, updatedAt, resolvedAt));
         }
 
         return list;
@@ -147,7 +148,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         url.Append(baseUrl);
         url.Append("/api/now/table/");
         url.Append(Uri.EscapeDataString(table));
-        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,state,urgency,opened_at,sys_updated_on");
+        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,incident_state,urgency,opened_at,sys_updated_on,resolved_at,closed_at");
         url.Append("&sysparm_query=");
         url.Append(Uri.EscapeDataString($"sys_id={sysId}"));
 
@@ -171,12 +172,13 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         var desc = GetDescription(item);
         if (string.IsNullOrWhiteSpace(desc))
             desc = await GetLatestCustomerCommentAsync(sysId, ct);
-        var state = item.TryGetProperty("state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
+        var state = NormalizeState(item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0);
         var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
         var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
         var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
+        var resolvedAt = GetResolvedAt(item);
 
-        return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), openedAt, updatedAt);
+        return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), openedAt, updatedAt, resolvedAt);
     }
 
     private static string ToSnakeCase(string value)
@@ -208,6 +210,14 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
     private static string GetString(JsonElement item, string propertyName)
         => item.TryGetProperty(propertyName, out var property) ? property.GetString() ?? string.Empty : string.Empty;
+
+    private static DateTime? GetResolvedAt(JsonElement item)
+        => GetDateTime(item, "resolved_at") ?? GetDateTime(item, "closed_at");
+
+    private static DateTime? GetDateTime(JsonElement item, string propertyName)
+        => item.TryGetProperty(propertyName, out var property) && DateTime.TryParse(property.GetString(), out var date)
+            ? DateTime.SpecifyKind(date, DateTimeKind.Utc)
+            : null;
 
     private async Task<string> GetLatestCustomerCommentAsync(string sysId, CancellationToken ct)
     {
@@ -246,6 +256,12 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         5 => "Closed",
         6 => "Canceled",
         _ => "Unknown"
+    };
+
+    private static int NormalizeState(int state) => state switch
+    {
+        7 => 5,
+        _ => state
     };
 
     private static string MapUrgencyLabel(int urgency) => urgency switch
