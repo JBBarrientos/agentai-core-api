@@ -124,7 +124,8 @@ public sealed class ServiceNowConnector : IServiceNowConnector
             var desc = GetDescription(item);
             if (string.IsNullOrWhiteSpace(desc))
                 desc = await GetLatestCustomerCommentAsync(sysId, ct);
-            var state = NormalizeState(item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0);
+            var serviceNowState = item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
+            var state = MapIncidentState(serviceNowState);
             var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
             var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
             var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
@@ -172,7 +173,8 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         var desc = GetDescription(item);
         if (string.IsNullOrWhiteSpace(desc))
             desc = await GetLatestCustomerCommentAsync(sysId, ct);
-        var state = NormalizeState(item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0);
+        var serviceNowState = item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
+        var state = MapIncidentState(serviceNowState);
         var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
         var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
         var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
@@ -247,6 +249,19 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         return GetString(result[0], "value");
     }
 
+    private static int MapIncidentState(int serviceNowState) => serviceNowState switch
+    {
+        1 => 1, // New
+        2 => 2, // In Progress
+        3 => 3, // On Hold
+        4 => 4, // Resolved in UI position-based values
+        5 => 5, // Closed in UI position-based values
+        6 => 4, // ServiceNow incident_state: Resolved
+        7 => 5, // ServiceNow incident_state: Closed
+        8 => 6, // ServiceNow incident_state: Canceled
+        _ => 0
+    };
+
     private static string MapStateLabel(int state) => state switch
     {
         1 => "New",
@@ -256,12 +271,6 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         5 => "Closed",
         6 => "Canceled",
         _ => "Unknown"
-    };
-
-    private static int NormalizeState(int state) => state switch
-    {
-        7 => 5,
-        _ => state
     };
 
     private static string MapUrgencyLabel(int urgency) => urgency switch
