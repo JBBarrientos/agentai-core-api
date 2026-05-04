@@ -75,8 +75,9 @@ app.MapGet("/weatherforecast", () =>
 .RequireAuthorization();
 
 
-using (var scope = app.Services.CreateScope())
+if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }

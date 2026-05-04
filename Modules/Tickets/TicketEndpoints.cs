@@ -17,6 +17,14 @@ public static class TicketEndpoints
                 ? Results.Ok(ticket)
                 : Results.NotFound());
 
+        group.MapGet("/servicenow", async (int? limit, string? query, ITicketService service, CancellationToken ct) =>
+            Results.Ok(await service.GetFromServiceNowAsync(limit ?? 20, query, ct)))
+            .AllowAnonymous();
+
+        group.MapPost("/sync-servicenow", async (int? limit, string? query, ITicketService service, CancellationToken ct) =>
+            Results.Ok(await service.SyncFromServiceNowAsync(limit ?? 20, query, ct)))
+            .AllowAnonymous();
+
         group.MapPost("/", async (CreateTicketRequest req, ITicketService service, CancellationToken ct) =>
         {
             await service.CreateAsync(req, ct);

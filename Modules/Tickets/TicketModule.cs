@@ -1,19 +1,22 @@
-﻿namespace AgentAI.Modules.Tickets
+using AgentAI.Modules.ServiceNow;
+
+namespace AgentAI.Modules.Tickets;
+
+public static class TicketModule
 {
-    public static class TicketModule
+    public static IServiceCollection AddTicketModule(this IServiceCollection services)
     {
-        public static IServiceCollection AddTicketModule(this IServiceCollection services)
-        {
-            services.AddScoped<ITicketRepository, TicketRepository>();
-            services.AddScoped<ITicketService, TicketService>();
+        services.AddHttpClient<IServiceNowConnector, ServiceNowConnector>();
+        services.AddHostedService<ServiceNowSyncWorker>();
+        services.AddScoped<ITicketRepository, TicketRepository>();
+        services.AddScoped<ITicketService, TicketService>();
 
-            return services;
-        }
+        return services;
+    }
 
-        public static IEndpointRouteBuilder MapTicketModule(this IEndpointRouteBuilder app)
-        {
-            app.MapTicketEndpoints();
-            return app;
-        }
+    public static IEndpointRouteBuilder MapTicketModule(this IEndpointRouteBuilder app)
+    {
+        app.MapTicketEndpoints();
+        return app;
     }
 }

@@ -15,6 +15,7 @@ obj/
 # Secrets
 secrets.json
 *.secret.json
+.env
 
 # Test results
 TestResults/

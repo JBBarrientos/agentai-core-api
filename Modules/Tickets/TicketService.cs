@@ -1,15 +1,21 @@
-﻿using AgentAI.Modules.Tickets.Dto;
+using AgentAI.Modules.ServiceNow;
+using AgentAI.Modules.Tickets.Dto;
 
 namespace AgentAI.Modules.Tickets;
 
 public class TicketService : ITicketService
 {
     private readonly ITicketRepository _repository;
+    private readonly IServiceNowConnector _serviceNow;
     private readonly ILogger<TicketService> _logger;
 
-    public TicketService(ITicketRepository repository, ILogger<TicketService> logger)
+    public TicketService(
+        ITicketRepository repository,
+        IServiceNowConnector serviceNow,
+        ILogger<TicketService> logger)
     {
         _repository = repository;
+        _serviceNow = serviceNow;
         _logger = logger;
     }
 
@@ -18,6 +24,36 @@ public class TicketService : ITicketService
 
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
+
+    public async Task<IEnumerable<Ticket>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
+    {
+        var incidents = await _serviceNow.GetIncidentsAsync(limit, query, ct);
+        return incidents.Select(MapIncidentToTicket);
+    }
+
+    public async Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
+    {
+        var incidents = await _serviceNow.GetIncidentsAsync(limit, query, ct);
+        var syncedTickets = new List<Ticket>();
+
+        foreach (var incident in incidents)
+        {
+            var existing = await _repository.GetBySysIdAsync(incident.SysId, ct);
+            var ticket = existing ?? new Ticket { SysId = incident.SysId };
+
+            ApplyIncident(ticket, incident);
+
+            if (existing is null)
+                await _repository.AddAsync(ticket, ct);
+            else
+                await _repository.UpdateAsync(ticket, ct);
+
+            syncedTickets.Add(ticket);
+        }
+
+        _logger.LogInformation("Synced {Count} ServiceNow incidents.", syncedTickets.Count);
+        return syncedTickets;
+    }
 
     public async Task CreateAsync(CreateTicketRequest req, CancellationToken ct = default)
     {
@@ -62,4 +98,24 @@ public class TicketService : ITicketService
     public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
         => await _repository.DeleteAsync(id, ct);
 
+    private static Ticket MapIncidentToTicket(ServiceNowIncident incident)
+    {
+        var ticket = new Ticket { SysId = incident.SysId };
+        ApplyIncident(ticket, incident);
+        return ticket;
+    }
+
+    private static void ApplyIncident(Ticket ticket, ServiceNowIncident incident)
+    {
+        ticket.Number = incident.Number;
+        ticket.Title = incident.Title;
+        ticket.Description = incident.Description;
+        ticket.State = incident.State;
+        ticket.StateLabel = incident.StateLabel;
+        ticket.Priority = incident.Priority;
+        ticket.PriorityLabel = incident.PriorityLabel;
+        ticket.OpenedAt = incident.OpenedAt ?? DateTime.UtcNow;
+        ticket.UpdatedAt = incident.UpdatedAt ?? DateTime.UtcNow;
+        ticket.LastSyncedAt = DateTime.UtcNow;
+    }
 }
