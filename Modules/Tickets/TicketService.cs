@@ -25,10 +25,10 @@ public class TicketService : ITicketService
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
 
-    public async Task<IEnumerable<Ticket>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
+    public async Task<IEnumerable<ServiceNowTicketResponse>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
     {
         var incidents = await _serviceNow.GetIncidentsAsync(limit, query, ct);
-        return incidents.Select(MapIncidentToTicket);
+        return incidents.Select(MapIncidentToServiceNowResponse);
     }
 
     public async Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
@@ -105,6 +105,23 @@ public class TicketService : ITicketService
         return ticket;
     }
 
+    private static ServiceNowTicketResponse MapIncidentToServiceNowResponse(ServiceNowIncident incident)
+        => new(
+            incident.SysId,
+            incident.Number,
+            incident.Title,
+            incident.Description,
+            incident.State,
+            incident.StateLabel,
+            incident.Priority,
+            incident.PriorityLabel,
+            incident.CreatedByName,
+            incident.CreatedByEmail,
+            incident.OpenedAt,
+            incident.UpdatedAt,
+            incident.ResolvedAt,
+            DateTime.UtcNow);
+
     private static void ApplyIncident(Ticket ticket, ServiceNowIncident incident)
     {
         ticket.Number = incident.Number;
@@ -114,6 +131,8 @@ public class TicketService : ITicketService
         ticket.StateLabel = incident.StateLabel;
         ticket.Priority = incident.Priority;
         ticket.PriorityLabel = incident.PriorityLabel;
+        ticket.CreatedByName = incident.CreatedByName;
+        ticket.CreatedByEmail = incident.CreatedByEmail;
         ticket.OpenedAt = incident.OpenedAt ?? DateTime.UtcNow;
         ticket.UpdatedAt = incident.UpdatedAt ?? DateTime.UtcNow;
         ticket.ResolvedAt = incident.ResolvedAt;

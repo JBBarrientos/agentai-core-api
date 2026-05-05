@@ -46,6 +46,16 @@
 
     public string PriorityLabel { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Name of the ServiceNow caller/requester shown in the incident form.
+    /// </summary>
+    public string CreatedByName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Email of the ServiceNow caller/requester.
+    /// </summary>
+    public string CreatedByEmail { get; set; } = string.Empty;
+
     // --- Audit timestamps ---
 
     public DateTime OpenedAt { get; set; }

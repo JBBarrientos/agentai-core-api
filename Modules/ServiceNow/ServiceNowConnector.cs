@@ -16,6 +16,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _client;
     private readonly IConfiguration _configuration;
+    private readonly Dictionary<string, ServiceNowUser> _userCache = new(StringComparer.OrdinalIgnoreCase);
     private string? _accessToken;
     private DateTimeOffset _accessTokenExpiresAt;
 
@@ -95,7 +96,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         url.Append(baseUrl);
         url.Append("/api/now/table/");
         url.Append(Uri.EscapeDataString(table));
-        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,incident_state,urgency,opened_at,sys_updated_on,resolved_at,closed_at");
+        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,incident_state,urgency,caller_id,opened_by,opened_at,sys_updated_on,resolved_at,closed_at");
         url.Append("&sysparm_query=");
         url.Append(Uri.EscapeDataString(string.IsNullOrWhiteSpace(query) ? "ORDERBYDESCsys_updated_on" : query));
         url.Append("&sysparm_limit=");
@@ -127,11 +128,12 @@ public sealed class ServiceNowConnector : IServiceNowConnector
             var serviceNowState = item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
             var state = MapIncidentState(serviceNowState);
             var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
+            var createdBy = await GetTicketCreatorAsync(item, ct);
             var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
             var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
             var resolvedAt = GetResolvedAt(item);
 
-            list.Add(new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), openedAt, updatedAt, resolvedAt));
+            list.Add(new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), createdBy.Name, createdBy.Email, openedAt, updatedAt, resolvedAt));
         }
 
         return list;
@@ -149,7 +151,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         url.Append(baseUrl);
         url.Append("/api/now/table/");
         url.Append(Uri.EscapeDataString(table));
-        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,incident_state,urgency,opened_at,sys_updated_on,resolved_at,closed_at");
+        url.Append("?sysparm_fields=sys_id,number,short_description,description,comments,comments_and_work_notes,incident_state,urgency,caller_id,opened_by,opened_at,sys_updated_on,resolved_at,closed_at");
         url.Append("&sysparm_query=");
         url.Append(Uri.EscapeDataString($"sys_id={sysId}"));
 
@@ -176,11 +178,12 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         var serviceNowState = item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
         var state = MapIncidentState(serviceNowState);
         var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
+        var createdBy = await GetTicketCreatorAsync(item, ct);
         var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
         var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
         var resolvedAt = GetResolvedAt(item);
 
-        return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), openedAt, updatedAt, resolvedAt);
+        return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), createdBy.Name, createdBy.Email, openedAt, updatedAt, resolvedAt);
     }
 
     private static string ToSnakeCase(string value)
@@ -247,6 +250,66 @@ public sealed class ServiceNowConnector : IServiceNowConnector
             return string.Empty;
 
         return GetString(result[0], "value");
+    }
+
+    private async Task<ServiceNowUser> GetTicketCreatorAsync(JsonElement item, CancellationToken ct)
+    {
+        var callerSysId = GetReferenceSysId(item, "caller_id");
+        var openedBySysId = GetReferenceSysId(item, "opened_by");
+        var userSysId = !string.IsNullOrWhiteSpace(callerSysId) ? callerSysId : openedBySysId;
+
+        if (string.IsNullOrWhiteSpace(userSysId))
+            return new ServiceNowUser(string.Empty, string.Empty, string.Empty);
+
+        return await GetUserAsync(userSysId, ct);
+    }
+
+    private async Task<ServiceNowUser> GetUserAsync(string sysId, CancellationToken ct)
+    {
+        if (_userCache.TryGetValue(sysId, out var cachedUser))
+            return cachedUser;
+
+        var baseUrl = GetSetting("BaseUrl")!.TrimEnd('/');
+        var url = new StringBuilder();
+        url.Append(baseUrl);
+        url.Append("/api/now/table/sys_user/");
+        url.Append(Uri.EscapeDataString(sysId));
+        url.Append("?sysparm_fields=sys_id,name,email,user_name");
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, url.ToString());
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetAccessTokenAsync(ct));
+
+        using var res = await _client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+
+        if (!res.IsSuccessStatusCode)
+            throw new InvalidOperationException($"ServiceNow user returned {res.StatusCode}: {body}");
+
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("result", out var result))
+            return new ServiceNowUser(sysId, string.Empty, string.Empty);
+
+        var user = new ServiceNowUser(
+            GetString(result, "sys_id"),
+            GetString(result, "name"),
+            GetString(result, "email"));
+
+        _userCache[sysId] = user;
+        return user;
+    }
+
+    private static string GetReferenceSysId(JsonElement item, string propertyName)
+    {
+        if (!item.TryGetProperty(propertyName, out var property))
+            return string.Empty;
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Object => GetString(property, "value"),
+            JsonValueKind.String => property.GetString() ?? string.Empty,
+            _ => string.Empty
+        };
     }
 
     private static int MapIncidentState(int serviceNowState) => serviceNowState switch
