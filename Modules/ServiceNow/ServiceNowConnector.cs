@@ -15,6 +15,7 @@ public interface IServiceNowConnector
     Task AddWorkNoteAsync(string sysId, string note, CancellationToken ct = default);
     Task MarkInProgressAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default);
     Task ResolveIncidentAsync(string sysId, string closeNotes, string? workNote = null, string closeCode = "Solution provided", CancellationToken ct = default);
+    Task EscalateIncidentAsync(string sysId, string assignmentGroupSysId, string workNote, string? customerComment = null, CancellationToken ct = default);
 }
 
 public sealed class ServiceNowConnector : IServiceNowConnector
@@ -256,6 +257,23 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
         if (!string.IsNullOrWhiteSpace(workNote))
             fields["work_notes"] = workNote;
+
+        await PatchIncidentAsync(sysId, fields, ct);
+    }
+
+    public async Task EscalateIncidentAsync(string sysId, string assignmentGroupSysId, string workNote, string? customerComment = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(assignmentGroupSysId))
+            throw new ArgumentException("assignmentGroupSysId is required", nameof(assignmentGroupSysId));
+
+        var fields = new Dictionary<string, string>
+        {
+            ["assignment_group"] = assignmentGroupSysId,
+            ["work_notes"] = workNote
+        };
+
+        if (!string.IsNullOrWhiteSpace(customerComment))
+            fields["comments"] = customerComment;
 
         await PatchIncidentAsync(sysId, fields, ct);
     }

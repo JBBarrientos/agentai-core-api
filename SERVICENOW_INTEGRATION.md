@@ -276,6 +276,7 @@ AddCustomerCommentAsync(...)
 AddWorkNoteAsync(...)
 MarkInProgressAsync(...)
 ResolveIncidentAsync(...)
+EscalateIncidentAsync(...)
 ```
 
 Validado manualmente con `curl`:
@@ -286,6 +287,7 @@ work_notes OK
 incident_state=2 / In Progress OK
 incident_state=6 / Resolved OK
 close_code=Solution provided OK
+assignment_group=Incident Management OK
 ```
 
 ### `Modules/ServiceNow/ServiceNowRetryHandler.cs`
@@ -638,8 +640,23 @@ POST /teams/notifications/tickets/{sysId}/escalated?reason=Texto
 Este endpoint agrega informacion en ServiceNow:
 
 ```text
+assignment_group = ServiceNow:EscalationAssignmentGroupSysId
 work_notes = AgentAI derivo el caso a soporte
 comments = mensaje visible para el usuario
+```
+
+Grupo de escalamiento configurado:
+
+```json
+"ServiceNow": {
+  "EscalationAssignmentGroupSysId": "12a586cd0bb23200ecfd818393673a30"
+}
+```
+
+El valor actual corresponde al grupo:
+
+```text
+Incident Management
 ```
 
 ## Que falta para Teams real

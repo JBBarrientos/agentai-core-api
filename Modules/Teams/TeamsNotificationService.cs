@@ -66,9 +66,17 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
             : reason.Trim();
         var body = $"Hola {GetDisplayName(ticket)}, tu caso {ticket.Number} fue derivado a soporte. {escalationReason}";
         var workNote = $"AgentAI derivo el caso {ticket.Number} a soporte. Motivo: {escalationReason}";
+        var assignmentGroupSysId = _configuration["ServiceNow:EscalationAssignmentGroupSysId"];
 
-        await _serviceNowConnector.AddWorkNoteAsync(ticket.SysId, workNote, ct);
-        await _serviceNowConnector.AddCustomerCommentAsync(ticket.SysId, body, ct);
+        if (string.IsNullOrWhiteSpace(assignmentGroupSysId))
+        {
+            await _serviceNowConnector.AddWorkNoteAsync(ticket.SysId, workNote, ct);
+            await _serviceNowConnector.AddCustomerCommentAsync(ticket.SysId, body, ct);
+        }
+        else
+        {
+            await _serviceNowConnector.EscalateIncidentAsync(ticket.SysId, assignmentGroupSysId, workNote, body, ct);
+        }
 
         return await SendTicketNotificationAsync(ticket, "Ticket derivado a soporte", body, ct);
     }
