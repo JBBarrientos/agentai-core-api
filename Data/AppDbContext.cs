@@ -1,5 +1,9 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using AgentAI.Modules.Users;
+using AgentAI.Modules.Tickets;
+using AgentAI.Modules.Conversations;
+using AgentAI.Modules.Messages;
+
 namespace AgentAI.Data;
 
 public class AppDbContext : DbContext
@@ -10,5 +14,7 @@ public class AppDbContext : DbContext
     }
     public DbSet<User> Users => Set<User>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<Message> Messages => Set<Message>();
 
 }
