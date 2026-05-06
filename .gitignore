@@ -16,6 +16,7 @@ obj/
 secrets.json
 *.secret.json
 .env
+App_Data/
 
 # Test results
 TestResults/

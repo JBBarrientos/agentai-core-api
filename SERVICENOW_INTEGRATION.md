@@ -21,12 +21,6 @@ Endpoint correcto:
 https://dev375453.service-now.com/oauth_token.do
 ```
 
-No era:
-
-```text
-https://dev375453.service-now.com/oath_token.do
-```
-
 El body debe enviarse como `application/x-www-form-urlencoded`:
 
 ```text
@@ -308,3 +302,268 @@ Pendiente:
 - Activar `ServiceNowSyncWorker`.
 - Agregar paginacion con `sysparm_offset` si se necesita descargar todos los tickets en lotes.
 - Rotar secretos de ServiceNow porque fueron expuestos durante las pruebas.
+
+# Preparacion para Microsoft Teams
+
+## Objetivo
+
+Se agrego una estructura inicial para que la API pueda notificar por Teams cuando la IA tome, resuelva o escale un ticket.
+
+Por ahora el envio real a Teams queda desactivado/fake, porque todavia falta el consentimiento de administrador en Microsoft Graph. Esto permite probar el flujo sin depender de permisos externos.
+
+## App de Azure
+
+La app creada en Microsoft Entra ID es:
+
+```text
+AgentAI Teams Notifications
+```
+
+Permiso agregado:
+
+```text
+Microsoft Graph / Application permission / User.Read.All
+```
+
+Estado actual esperado hasta que lo apruebe un admin:
+
+```text
+No concedido para Asociacion ORT Argentina
+```
+
+Este permiso es necesario para que la API pueda buscar usuarios por email sin que un usuario tenga una sesion iniciada.
+
+## Configuracion local
+
+Guardar los datos de Microsoft Graph en `user-secrets`:
+
+```bash
+dotnet user-secrets set 'MicrosoftGraph:TenantId' 'TU_TENANT_ID'
+dotnet user-secrets set 'MicrosoftGraph:ClientId' 'TU_CLIENT_ID'
+dotnet user-secrets set 'MicrosoftGraph:ClientSecret' 'TU_CLIENT_SECRET'
+```
+
+Mientras el permiso no este aprobado, dejar apagada la resolucion real de usuarios:
+
+```bash
+dotnet user-secrets set 'MicrosoftGraph:ResolveUsersEnabled' 'false'
+```
+
+Cuando el admin apruebe `User.Read.All`, activar:
+
+```bash
+dotnet user-secrets set 'MicrosoftGraph:ResolveUsersEnabled' 'true'
+```
+
+Para variables de entorno, .NET usa doble guion bajo:
+
+```text
+MicrosoftGraph__TenantId=...
+MicrosoftGraph__ClientId=...
+MicrosoftGraph__ClientSecret=...
+MicrosoftGraph__ResolveUsersEnabled=true
+```
+
+Tambien se soportan variables estilo:
+
+```text
+MICROSOFT_GRAPH_TENANT_ID=...
+MICROSOFT_GRAPH_CLIENT_ID=...
+MICROSOFT_GRAPH_CLIENT_SECRET=...
+```
+
+## Clases creadas para Teams
+
+### `Modules/Teams/MicrosoftGraphClient.cs`
+
+Cliente HTTP para Microsoft Graph.
+
+Hace:
+
+- OAuth client credentials contra Microsoft Entra ID.
+- Usa scope `https://graph.microsoft.com/.default`.
+- Busca usuarios por email con:
+
+```text
+GET https://graph.microsoft.com/v1.0/users/{email}?$select=id,displayName,mail,userPrincipalName
+```
+
+Esto queda listo para cuando `User.Read.All` este aprobado.
+
+### `Modules/Teams/ITeamsNotificationSender.cs`
+
+Contrato para enviar notificaciones.
+
+Sirve para que el resto del sistema no dependa de si el envio es fake, Teams real, email u otro canal.
+
+### `Modules/Teams/FakeTeamsNotificationSender.cs`
+
+Implementacion temporal.
+
+No envia a Teams real. Escribe en logs algo como:
+
+```text
+[Teams fake] To=usuario@dominio.com Ticket=INC0010008 Subject=Ticket en revision Body=...
+```
+
+Esto permite probar endpoints y flujo de negocio sin permisos de Graph.
+
+### `Modules/Teams/TeamsNotificationService.cs`
+
+Orquesta las notificaciones:
+
+- Busca el ticket en ServiceNow por `sys_id`.
+- Toma `CreatedByEmail` como destinatario.
+- Opcionalmente resuelve el usuario en Graph si `MicrosoftGraph:ResolveUsersEnabled=true`.
+- Arma mensajes para:
+  - ticket en revision
+  - ticket resuelto
+  - ticket escalado a soporte
+- Envia usando `ITeamsNotificationSender`.
+
+### `Modules/Teams/TeamsEndpoints.cs`
+
+Expone endpoints de prueba.
+
+### `Modules/Teams/TeamsModule.cs`
+
+Registra los servicios de Teams en Dependency Injection.
+
+## Endpoints agregados
+
+### Probar notificacion fake
+
+```text
+POST /teams/notifications/test
+```
+
+Body:
+
+```json
+{
+  "recipientEmail": "usuario@dominio.com",
+  "message": "Mensaje de prueba"
+}
+```
+
+### Avisar que el ticket esta en revision
+
+```text
+POST /teams/notifications/tickets/{sysId}/review-started
+```
+
+Ejemplo:
+
+```bash
+curl -X POST "http://localhost:5038/teams/notifications/tickets/07b6916793e8071061d8fb97dd03d63f/review-started"
+```
+
+### Avisar que el ticket fue resuelto
+
+```text
+POST /teams/notifications/tickets/{sysId}/resolved?summary=Texto
+```
+
+### Avisar que el ticket fue escalado
+
+```text
+POST /teams/notifications/tickets/{sysId}/escalated?reason=Texto
+```
+
+## Que falta para Teams real
+
+El permiso `User.Read.All` solo permite buscar usuarios. Para mandar mensajes reales por Teams falta definir la estrategia final:
+
+- Bot de Teams con instalacion en usuarios y mensajes proactivos.
+- O envio via Microsoft Graph con permisos adicionales y modelo de chat permitido por el tenant.
+
+La estructura actual deja preparado el flujo para cambiar solo la implementacion de `ITeamsNotificationSender` cuando este definida la estrategia real.
+
+## Polling de tickets nuevos
+
+Se agrego un worker:
+
+```text
+Modules/Teams/TeamsTicketPollingWorker.cs
+```
+
+Este worker consulta ServiceNow periodicamente y dispara la notificacion de "ticket en revision" cuando detecta un ticket nuevo.
+
+Por defecto esta apagado:
+
+```json
+"Teams": {
+  "PollingEnabled": false
+}
+```
+
+Para probarlo localmente:
+
+```bash
+dotnet user-secrets set 'Teams:PollingEnabled' 'true'
+dotnet user-secrets set 'Teams:PollingIntervalSeconds' '30'
+dotnet user-secrets set 'Teams:PollingLimit' '20'
+dotnet user-secrets set 'Teams:PollingStartupLookbackMinutes' '2'
+dotnet user-secrets set 'Teams:NotifyExistingOnStartup' 'false'
+dotnet user-secrets remove 'Teams:PollingQuery'
+```
+
+Con `Teams:PollingQuery` vacio, el worker arma una query incremental usando `sys_created_on` desde el ultimo polling. Esto evita revisar todos los tickets en cada arranque o intervalo.
+
+Query generada internamente:
+
+```text
+incident_state=1^sys_created_on>=yyyy-MM-dd HH:mm:ss^ORDERBYsys_created_on
+```
+
+Con `NotifyExistingOnStartup=false`, el primer polling solo marca como conocidos los tickets encontrados dentro de la ventana inicial. A partir del segundo polling, si aparece un ticket nuevo, lo notifica.
+
+`PollingStartupLookbackMinutes` agrega una ventana chica al inicio para no perder tickets creados justo mientras la API esta levantando.
+
+El estado ya no queda solo en memoria. Se guarda en:
+
+```text
+App_Data/teams-ticket-polling-state.json
+```
+
+Ese archivo queda ignorado por git.
+
+El estado persistido incluye:
+
+- `LastProcessedOpenedAtUtc`: fecha del ultimo ticket procesado.
+- `LastProcessedTicketSysId`: `sys_id` del ultimo ticket procesado.
+- `LastProcessedTicketNumber`: numero visible del ultimo ticket procesado.
+- `ProcessedTicketSysIds`: tickets ya notificados.
+
+Esto permite que, si la API se apaga, al volver a iniciar consulte desde el ultimo ticket procesado y no dependa solamente de la ventana inicial.
+
+Importante: ServiceNow `sys_id` no es incremental ni ordenable, por eso la query no puede ser literalmente "desde este sys_id en adelante". La query usa `sys_created_on`/`openedAt` como cursor y `ProcessedTicketSysIds` para evitar duplicados. En la practica esto cubre el caso buscado:
+
+```text
+API apagada
+  -> se crean tickets nuevos
+API encendida
+  -> lee LastProcessedOpenedAtUtc
+  -> consulta tickets creados desde esa fecha
+  -> ignora los sys_id ya procesados
+  -> notifica los que faltan
+```
+
+Para produccion, lo ideal sigue siendo mover esta implementacion a una tabla SQL o a un storage persistente administrado. La API ya usa una interfaz:
+
+```text
+ITeamsPollingStateStore
+```
+
+Por eso se puede reemplazar el archivo por una tabla sin cambiar el worker.
+
+Flujo actual:
+
+```text
+ServiceNow ticket nuevo
+  -> polling lo detecta
+  -> TeamsNotificationService arma el mensaje
+  -> FakeTeamsNotificationSender lo escribe en logs
+```
+
+Cuando Teams real este listo, se reemplaza `FakeTeamsNotificationSender` por una implementacion real sin cambiar el worker.
