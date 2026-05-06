@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 
@@ -8,7 +9,12 @@ namespace AgentAI.Modules.ServiceNow;
 public interface IServiceNowConnector
 {
     Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsAsync(int limit = 20, string? query = null, CancellationToken ct = default);
+    Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsPagedAsync(int pageSize = 100, int maxPages = 5, string? query = null, CancellationToken ct = default);
     Task<ServiceNowIncident?> GetIncidentAsync(string sysId, CancellationToken ct = default);
+    Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default);
+    Task AddWorkNoteAsync(string sysId, string note, CancellationToken ct = default);
+    Task MarkInProgressAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default);
+    Task ResolveIncidentAsync(string sysId, string closeNotes, string? workNote = null, string closeCode = "Solution provided", CancellationToken ct = default);
 }
 
 public sealed class ServiceNowConnector : IServiceNowConnector
@@ -86,6 +92,29 @@ public sealed class ServiceNowConnector : IServiceNowConnector
     }
 
     public async Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsAsync(int limit = 20, string? query = null, CancellationToken ct = default)
+        => await GetIncidentsPageAsync(limit, 0, query, ct);
+
+    public async Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsPagedAsync(int pageSize = 100, int maxPages = 5, string? query = null, CancellationToken ct = default)
+    {
+        if (pageSize <= 0) throw new ArgumentOutOfRangeException(nameof(pageSize), "pageSize must be greater than zero.");
+        if (maxPages <= 0) throw new ArgumentOutOfRangeException(nameof(maxPages), "maxPages must be greater than zero.");
+
+        var incidents = new List<ServiceNowIncident>();
+
+        for (var page = 0; page < maxPages; page++)
+        {
+            var offset = page * pageSize;
+            var currentPage = await GetIncidentsPageAsync(pageSize, offset, query, ct);
+            incidents.AddRange(currentPage);
+
+            if (currentPage.Count < pageSize)
+                break;
+        }
+
+        return incidents;
+    }
+
+    private async Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsPageAsync(int limit = 20, int offset = 0, string? query = null, CancellationToken ct = default)
     {
         EnsureConfigured();
 
@@ -101,6 +130,8 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         url.Append(Uri.EscapeDataString(string.IsNullOrWhiteSpace(query) ? "ORDERBYDESCsys_updated_on" : query));
         url.Append("&sysparm_limit=");
         url.Append(limit.ToString(CultureInfo.InvariantCulture));
+        url.Append("&sysparm_offset=");
+        url.Append(offset.ToString(CultureInfo.InvariantCulture));
 
         var req = new HttpRequestMessage(HttpMethod.Get, url.ToString());
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -184,6 +215,70 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         var resolvedAt = GetResolvedAt(item);
 
         return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), createdBy.Name, createdBy.Email, openedAt, updatedAt, resolvedAt);
+    }
+
+    public async Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(comment)) throw new ArgumentException("comment is required", nameof(comment));
+        await PatchIncidentAsync(sysId, new Dictionary<string, string> { ["comments"] = comment }, ct);
+    }
+
+    public async Task AddWorkNoteAsync(string sysId, string note, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(note)) throw new ArgumentException("note is required", nameof(note));
+        await PatchIncidentAsync(sysId, new Dictionary<string, string> { ["work_notes"] = note }, ct);
+    }
+
+    public async Task MarkInProgressAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["state"] = "2",
+            ["incident_state"] = "2",
+            ["work_notes"] = workNote
+        };
+
+        if (!string.IsNullOrWhiteSpace(customerComment))
+            fields["comments"] = customerComment;
+
+        await PatchIncidentAsync(sysId, fields, ct);
+    }
+
+    public async Task ResolveIncidentAsync(string sysId, string closeNotes, string? workNote = null, string closeCode = "Solution provided", CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["state"] = "6",
+            ["incident_state"] = "6",
+            ["close_code"] = closeCode,
+            ["close_notes"] = closeNotes
+        };
+
+        if (!string.IsNullOrWhiteSpace(workNote))
+            fields["work_notes"] = workNote;
+
+        await PatchIncidentAsync(sysId, fields, ct);
+    }
+
+    private async Task PatchIncidentAsync(string sysId, IReadOnlyDictionary<string, string> fields, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sysId)) throw new ArgumentException("sysId is required", nameof(sysId));
+        EnsureConfigured();
+
+        var baseUrl = GetSetting("BaseUrl")!.TrimEnd('/');
+        var table = string.IsNullOrWhiteSpace(GetSetting("IncidentTable")) ? "incident" : GetSetting("IncidentTable")!;
+        var url = $"{baseUrl}/api/now/table/{Uri.EscapeDataString(table)}/{Uri.EscapeDataString(sysId)}";
+
+        using var req = new HttpRequestMessage(HttpMethod.Patch, url);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetAccessTokenAsync(ct));
+        req.Content = JsonContent.Create(fields, options: JsonOptions);
+
+        using var res = await _client.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+
+        if (!res.IsSuccessStatusCode)
+            throw new InvalidOperationException($"ServiceNow update returned {res.StatusCode}: {body}");
     }
 
     private static string ToSnakeCase(string value)

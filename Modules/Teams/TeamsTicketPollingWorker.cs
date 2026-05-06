@@ -71,11 +71,12 @@ public sealed class TeamsTicketPollingWorker : BackgroundService
         var stateStore = scope.ServiceProvider.GetRequiredService<ITeamsPollingStateStore>();
 
         var limit = Math.Max(_configuration.GetValue("Teams:PollingLimit", 20), 1);
+        var maxPages = Math.Max(_configuration.GetValue("Teams:PollingMaxPages", 5), 1);
         var query = BuildPollingQuery();
 
         var notifyExistingOnStartup = _configuration.GetValue("Teams:NotifyExistingOnStartup", false);
         var hasPersistedState = _state.LastProcessedOpenedAtUtc is not null || _state.ProcessedTicketSysIds.Count > 0;
-        var tickets = await serviceNow.GetIncidentsAsync(limit, query, ct);
+        var tickets = await serviceNow.GetIncidentsPagedAsync(limit, maxPages, query, ct);
         var knownOnStartupCount = 0;
         var notifiedCount = 0;
 

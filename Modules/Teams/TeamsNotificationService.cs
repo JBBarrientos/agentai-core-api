@@ -37,6 +37,9 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
     {
         var ticket = await GetTicketOrThrowAsync(serviceNowSysId, ct);
         var body = $"Hola {GetDisplayName(ticket)}, estamos revisando tu caso {ticket.Number}: \"{ticket.Title}\".";
+        var workNote = $"AgentAI comenzo a revisar el caso {ticket.Number}.";
+
+        await _serviceNowConnector.MarkInProgressAsync(ticket.SysId, workNote, body, ct);
 
         return await SendTicketNotificationAsync(ticket, "Ticket en revision", body, ct);
     }
@@ -48,6 +51,9 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
             ? "El caso fue marcado como resuelto."
             : resolutionSummary.Trim();
         var body = $"Hola {GetDisplayName(ticket)}, tu caso {ticket.Number} fue resuelto. {summary}";
+        var workNote = $"AgentAI resolvio el caso {ticket.Number}.";
+
+        await _serviceNowConnector.ResolveIncidentAsync(ticket.SysId, summary, workNote, ct: ct);
 
         return await SendTicketNotificationAsync(ticket, "Ticket resuelto", body, ct);
     }
@@ -59,6 +65,10 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
             ? "Necesita revision de soporte humano."
             : reason.Trim();
         var body = $"Hola {GetDisplayName(ticket)}, tu caso {ticket.Number} fue derivado a soporte. {escalationReason}";
+        var workNote = $"AgentAI derivo el caso {ticket.Number} a soporte. Motivo: {escalationReason}";
+
+        await _serviceNowConnector.AddWorkNoteAsync(ticket.SysId, workNote, ct);
+        await _serviceNowConnector.AddCustomerCommentAsync(ticket.SysId, body, ct);
 
         return await SendTicketNotificationAsync(ticket, "Ticket derivado a soporte", body, ct);
     }

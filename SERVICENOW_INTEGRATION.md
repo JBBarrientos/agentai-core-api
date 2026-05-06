@@ -161,6 +161,93 @@ caller_id=javascript:gs.getUserID()
 
 filtra por tickets del usuario logueado. Para traer tickets de todos los usuarios, ese filtro no debe usarse.
 
+## Limites y buenas practicas ServiceNow
+
+La integracion usa la Table API de ServiceNow:
+
+```text
+GET /api/now/table/incident
+```
+
+Parametros usados:
+
+```text
+sysparm_fields
+sysparm_query
+sysparm_limit
+```
+
+Buenas practicas aplicadas:
+
+- No consultar todos los tickets en cada polling.
+- Usar una query incremental por fecha (`sys_created_on` / `openedAt`).
+- Limitar la cantidad de resultados con `sysparm_limit`.
+- Persistir el ultimo ticket procesado para no repetir trabajo tras reiniciar la API.
+- Evitar duplicados guardando `sys_id` de tickets ya procesados.
+- Manejar `HTTP 429 Too Many Requests`.
+- Reintentar errores transitorios con backoff.
+- Configurar timeout para no dejar requests colgadas.
+- Mantener un intervalo de polling razonable.
+
+Configuracion actual recomendada:
+
+```json
+"ServiceNow": {
+  "TimeoutSeconds": 30,
+  "RetryCount": 3,
+  "RetryBaseDelaySeconds": 2
+},
+"Teams": {
+  "PollingIntervalSeconds": 30,
+  "PollingLimit": 20,
+  "PollingMaxPages": 5
+}
+```
+
+El cliente ServiceNow reintenta automaticamente:
+
+```text
+408 Request Timeout
+429 Too Many Requests
+500 Internal Server Error
+502 Bad Gateway
+503 Service Unavailable
+504 Gateway Timeout
+errores de red
+timeouts
+```
+
+Nota: los limites exactos pueden depender de la configuracion de la instancia ServiceNow. Esta integracion aplica buenas practicas para reducir el volumen de requests y responder de forma controlada si ServiceNow limita o falla temporalmente.
+
+Paginacion:
+
+El polling usa paginacion con:
+
+```text
+sysparm_limit
+sysparm_offset
+```
+
+Configuracion:
+
+```text
+Teams:PollingLimit    -> cantidad por pagina
+Teams:PollingMaxPages -> maximo de paginas por ciclo
+```
+
+Ejemplo con `PollingLimit=20` y `PollingMaxPages=5`:
+
+```text
+20 tickets por pagina x 5 paginas = hasta 100 tickets por polling
+```
+
+Pendiente si el volumen crece aun mas:
+
+- Aumentar `PollingLimit` solo si es necesario.
+- Aumentar `PollingMaxPages` solo si es necesario.
+- Ajustar `PollingIntervalSeconds` segun carga real.
+- Medir cantidad de requests y errores `429`.
+
 ## Clases Modificadas
 
 ### `Modules/ServiceNow/ServiceNowConnector.cs`
@@ -176,6 +263,65 @@ Se modifico para:
 - Aceptar `sysparm_query`.
 - Ordenar por defecto por `sys_updated_on` descendente.
 - Mapear el estado `7` como `Closed`.
+- Escribir actualizaciones en ServiceNow con `PATCH`.
+- Agregar comentarios visibles al cliente (`comments`).
+- Agregar notas internas (`work_notes`).
+- Pasar incidentes a `In Progress`.
+- Resolver incidentes con `close_code = Solution provided`.
+
+Metodos de escritura agregados:
+
+```csharp
+AddCustomerCommentAsync(...)
+AddWorkNoteAsync(...)
+MarkInProgressAsync(...)
+ResolveIncidentAsync(...)
+```
+
+Validado manualmente con `curl`:
+
+```text
+comments OK
+work_notes OK
+incident_state=2 / In Progress OK
+incident_state=6 / Resolved OK
+close_code=Solution provided OK
+```
+
+### `Modules/ServiceNow/ServiceNowRetryHandler.cs`
+
+Se agrego un handler HTTP para robustez del cliente ServiceNow.
+
+Hace reintentos automaticos ante fallas transitorias:
+
+- timeout
+- error de red
+- HTTP `408`
+- HTTP `429`
+- HTTP `500`
+- HTTP `502`
+- HTTP `503`
+- HTTP `504`
+
+La configuracion queda en:
+
+```json
+"ServiceNow": {
+  "TimeoutSeconds": 30,
+  "RetryCount": 3,
+  "RetryBaseDelaySeconds": 2
+}
+```
+
+El retry usa backoff exponencial:
+
+```text
+2s, 4s, 8s...
+```
+
+con maximo de 30 segundos por espera.
+
+Cuando hay retry, se registra un warning en logs.
 
 ### `Modules/ServiceNow/ServiceNowModels.cs`
 
@@ -458,16 +604,42 @@ Ejemplo:
 curl -X POST "http://localhost:5038/teams/notifications/tickets/07b6916793e8071061d8fb97dd03d63f/review-started"
 ```
 
+Este endpoint tambien actualiza ServiceNow:
+
+```text
+state = 2
+incident_state = 2
+work_notes = AgentAI comenzo a revisar el caso
+comments = mensaje visible para el usuario
+```
+
 ### Avisar que el ticket fue resuelto
 
 ```text
 POST /teams/notifications/tickets/{sysId}/resolved?summary=Texto
 ```
 
+Este endpoint tambien actualiza ServiceNow:
+
+```text
+state = 6
+incident_state = 6
+close_code = Solution provided
+close_notes = resumen de resolucion
+work_notes = AgentAI resolvio el caso
+```
+
 ### Avisar que el ticket fue escalado
 
 ```text
 POST /teams/notifications/tickets/{sysId}/escalated?reason=Texto
+```
+
+Este endpoint agrega informacion en ServiceNow:
+
+```text
+work_notes = AgentAI derivo el caso a soporte
+comments = mensaje visible para el usuario
 ```
 
 ## Que falta para Teams real
