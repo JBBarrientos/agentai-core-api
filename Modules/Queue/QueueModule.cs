@@ -20,6 +20,7 @@ public static class QueueModule
 
         services.AddSingleton<ActionDispatcher>();
         services.AddHostedService<OutboundQueueWorker>();
+        services.AddScoped<InboundQueueService>();
 
         return services;
     }
