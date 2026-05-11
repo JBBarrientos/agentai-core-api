@@ -9,6 +9,7 @@ using AgentAI.Modules.Authentication;
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
 using AgentAI.Modules.Queue;
+using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -96,7 +97,7 @@ app.MapGet("/weatherforecast", () =>
 .WithOpenApi()
 .RequireAuthorization();
 
-app.MapPost("/dev/queue/send", async (InboundQueueService queue) =>
+app.MapPost("/dev/queue/send", async ([FromServices] InboundQueueService queue) =>
 {
     await queue.SendAsync(new InboundMessage(
         TicketId: "INC0001",
@@ -104,7 +105,6 @@ app.MapPost("/dev/queue/send", async (InboundQueueService queue) =>
         CustomerId: "juan.perez@empresa.com",
         Metadata: []
     ));
-
     return Results.Ok("Message sent to inbound queue");
 });
 
