@@ -8,6 +8,7 @@ using AgentAI.Modules.Conversations;
 using AgentAI.Modules.Authentication;
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
+using AgentAI.Modules.Queue;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -48,6 +49,12 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader();
     });
 });
+
+if (!builder.Environment.IsDevelopment())
+{
+    builder.Services.AddQueueModule(builder.Configuration);
+}
+
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
 app.UseCors("AllowAll");
@@ -89,6 +96,17 @@ app.MapGet("/weatherforecast", () =>
 .WithOpenApi()
 .RequireAuthorization();
 
+app.MapPost("/dev/queue/send", async (InboundQueueService queue) =>
+{
+    await queue.SendAsync(new InboundMessage(
+        TicketId: "INC0001",
+        CorrelationId: Guid.NewGuid().ToString(),
+        CustomerId: "juan.perez@empresa.com",
+        Metadata: []
+    ));
+
+    return Results.Ok("Message sent to inbound queue");
+});
 
 using (var scope = app.Services.CreateScope())
 {
