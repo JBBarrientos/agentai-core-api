@@ -1,4 +1,5 @@
 ﻿using AgentAI.Modules.Messages;
+using AgentAI.Modules.Tickets;
 
 namespace AgentAI.Modules.Conversations
 {

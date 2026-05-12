@@ -1,5 +1,7 @@
 ﻿using AgentAI.Modules.Conversations;
 
+namespace AgentAI.Modules.Tickets;
+
 public class Ticket
 {
     public int Id { get; set; }

@@ -10,6 +10,10 @@ using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
 using AgentAI.Modules.Queue;
 using Microsoft.AspNetCore.Mvc;
+using AgentAI.Modules.AuditLog;
+using AgentAI.Modules.AgentRuns;
+using AgentAI.Modules.AgentSteps;
+using AgentAI.Modules.KbUsages;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,7 +36,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
 builder.Services.AddConversationModule();
+builder.Services.AddAuditLogModule();
+builder.Services.AddAgentRunModule();
 builder.Services.AddMessageModule();
+builder.Services.AddAgentStepModule();
+builder.Services.AddKbUsageModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
@@ -66,6 +74,10 @@ app.MapTicketModule();
 app.MapConversationModule();
 app.MapMessageModule();
 app.MapAuthenticationModule();
+app.MapAuditLogModule();
+app.MapAgentRunModule();
+app.MapAgentStepModule();
+app.MapKbUsageModule();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
