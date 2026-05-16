@@ -74,6 +74,111 @@ curl "https://dev375453.service-now.com/api/now/table/incident?sysparm_limit=5" 
   -H "Authorization: Bearer TU_ACCESS_TOKEN"
 ```
 
+### Obtener Client ID y Client Secret
+
+Antes de configurar la API local, hay que crear una aplicacion OAuth dentro de la instancia de ServiceNow:
+
+1. Entrar a la instancia:
+
+```text
+https://devXXXXXX.service-now.com
+```
+
+2. En el buscador izquierdo, abrir:
+
+```text
+System OAuth > Application Registry
+```
+
+3. Hacer click en `New`.
+
+4. Elegir:
+
+```text
+Create an OAuth API endpoint for external clients
+```
+
+5. Completar los datos basicos:
+
+```text
+Name: AgentAI Local API
+Redirect URL: http://localhost
+```
+
+6. Revisar `Scope Restriction`.
+
+La app OAuth debe permitir acceso a APIs globales/no scoped. Si queda restringida, ServiceNow devuelve este error cuando la API intenta consultar `incident`:
+
+```json
+{
+  "error": {
+    "message": "User Not Authorized",
+    "detail": "Access to unscoped api is not allowed"
+  },
+  "status": "failure"
+}
+```
+
+Segun la version/vista de ServiceNow, configurar `Scope Restriction` en una opcion equivalente a:
+
+```text
+None
+Allow access to all application scopes
+```
+
+El objetivo es permitir llamadas a endpoints como:
+
+```text
+/api/now/table/incident
+```
+
+7. Guardar con `Submit` o `Save`.
+
+8. Abrir el registro creado y copiar:
+
+```text
+Client ID
+Client Secret
+```
+
+Si `Client Secret` no se ve directamente, usar la opcion de mostrar/revelar el secreto dentro del registro OAuth.
+
+### Crear usuario para la API
+
+Para no usar el usuario `admin` directamente desde la API, se puede crear un usuario dedicado para la integracion:
+
+```text
+User ID: agente.ia
+Name: Agente IA
+Active: true
+Password: definir una password conocida para la integracion
+```
+
+Roles recomendados para que la API pueda leer y actualizar incidentes:
+
+```text
+sn_incident_write
+sn_incident_read
+incident_manager
+admin
+```
+
+Para una demo o prueba rapida, `admin` evita bloqueos por ACL o permisos faltantes. Para un entorno mas controlado, conviene quitar `admin` y validar que los roles especificos de incidentes alcancen para:
+
+- leer tickets de la tabla `incident`;
+- cambiar estado a `In Progress`;
+- escribir `comments`;
+- escribir `work_notes`;
+- leer datos basicos de `sys_user`;
+- consultar comentarios en `sys_journal_field`.
+
+Luego cargar este usuario en los secretos locales:
+
+```bash
+dotnet user-secrets set 'ServiceNow:Username' 'agente.ia'
+dotnet user-secrets set 'ServiceNow:Password' 'PASSWORD_DEL_USUARIO'
+```
+
 ## Configuracion Local
 
 Los secretos se guardan con `dotnet user-secrets`, no en `appsettings.json`.
@@ -624,7 +729,7 @@ Se agrego un worker:
 Modules/Notifications/NotificationTicketPollingWorker.cs
 ```
 
-Este worker consulta ServiceNow periodicamente y dispara la notificacion de "ticket en revision" cuando detecta un ticket nuevo.
+Este worker consulta ServiceNow periodicamente. Cuando detecta un ticket nuevo, actualiza el ticket en ServiceNow para marcarlo en revision, pero no envia mensajes salientes por Telegram.
 
 Por defecto esta apagado:
 
@@ -653,7 +758,7 @@ Query generada internamente:
 incident_state=1^sys_created_on>=yyyy-MM-dd HH:mm:ss^ORDERBYsys_created_on
 ```
 
-Con `NotifyExistingOnStartup=false`, el primer polling solo marca como conocidos los tickets encontrados dentro de la ventana inicial. A partir del segundo polling, si aparece un ticket nuevo, lo notifica.
+Con `NotifyExistingOnStartup=false`, el primer polling solo marca como conocidos los tickets encontrados dentro de la ventana inicial. A partir del segundo polling, si aparece un ticket nuevo, lo marca como `In Progress` y agrega comentario/work note en ServiceNow.
 
 `PollingStartupLookbackMinutes` agrega una ventana chica al inicio para no perder tickets creados justo mientras la API esta levantando.
 
@@ -670,7 +775,7 @@ El estado persistido incluye:
 - `LastProcessedOpenedAtUtc`: fecha del ultimo ticket procesado.
 - `LastProcessedTicketSysId`: `sys_id` del ultimo ticket procesado.
 - `LastProcessedTicketNumber`: numero visible del ultimo ticket procesado.
-- `ProcessedTicketSysIds`: tickets ya notificados.
+- `ProcessedTicketSysIds`: tickets ya procesados por el polling.
 
 Esto permite que, si la API se apaga, al volver a iniciar consulte desde el ultimo ticket procesado y no dependa solamente de la ventana inicial.
 
@@ -683,7 +788,8 @@ API encendida
   -> lee LastProcessedOpenedAtUtc
   -> consulta tickets creados desde esa fecha
   -> ignora los sys_id ya procesados
-  -> notifica los que faltan
+  -> marca como In Progress los que faltan
+  -> agrega comentario y work note en ServiceNow
 ```
 
 Para produccion, lo ideal sigue siendo mover esta implementacion a una tabla SQL o a un storage persistente administrado. La API ya usa una interfaz:
@@ -699,8 +805,8 @@ Flujo actual:
 ```text
 ServiceNow ticket nuevo
   -> polling lo detecta
-  -> NotificationService arma el mensaje
-  -> TelegramNotificationSender envia el mensaje
+  -> ServiceNow pasa a In Progress
+  -> ServiceNow recibe comentario y work note
 ```
 
-Si mas adelante se quiere cambiar el canal de envio, se puede reemplazar la implementacion de `INotificationSender` sin cambiar el worker.
+Telegram solo responde cuando un usuario escribe al bot e incluye un numero de ticket en el mensaje. En ese caso `/telegram/webhook` consulta ServiceNow por numero y responde unicamente al chat que hizo la consulta.

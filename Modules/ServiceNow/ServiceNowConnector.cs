@@ -11,6 +11,7 @@ public interface IServiceNowConnector
     Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsAsync(int limit = 20, string? query = null, CancellationToken ct = default);
     Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsPagedAsync(int pageSize = 100, int maxPages = 5, string? query = null, CancellationToken ct = default);
     Task<ServiceNowIncident?> GetIncidentAsync(string sysId, CancellationToken ct = default);
+    Task<ServiceNowIncident?> GetIncidentByNumberAsync(string number, CancellationToken ct = default);
     Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default);
     Task AddWorkNoteAsync(string sysId, string note, CancellationToken ct = default);
     Task MarkInProgressAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default);
@@ -216,6 +217,59 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         var resolvedAt = GetResolvedAt(item);
 
         return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), createdBy.Name, createdBy.Email, openedAt, updatedAt, resolvedAt);
+    }
+
+    public async Task<ServiceNowIncident?> GetIncidentByNumberAsync(string number, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(number)) throw new ArgumentException("number is required", nameof(number));
+
+        var candidates = BuildIncidentNumberCandidates(number);
+        var query = string.Join("^OR", candidates.Select(candidate => $"number={candidate}"));
+        var incidents = await GetIncidentsAsync(candidates.Count, query, ct);
+        return incidents.FirstOrDefault();
+    }
+
+    private static IReadOnlyList<string> BuildIncidentNumberCandidates(string number)
+    {
+        var normalized = string.Concat(number.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit));
+        var candidates = new List<string>();
+
+        void Add(string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && !candidates.Contains(value, StringComparer.OrdinalIgnoreCase))
+                candidates.Add(value);
+        }
+
+        Add(normalized);
+
+        var prefixedMatch = System.Text.RegularExpressions.Regex.Match(normalized, @"^([A-Z]{2,5})(\d{1,12})$");
+        if (prefixedMatch.Success)
+        {
+            var prefix = prefixedMatch.Groups[1].Value;
+            var digits = prefixedMatch.Groups[2].Value;
+            var unpaddedDigits = digits.TrimStart('0');
+
+            if (digits.Length <= 7)
+                Add($"{prefix}{digits.PadLeft(7, '0')}");
+
+            if (!string.IsNullOrWhiteSpace(unpaddedDigits))
+                Add($"{prefix}{unpaddedDigits}");
+        }
+        else if (normalized.All(char.IsDigit))
+        {
+            var digits = normalized;
+            var unpaddedDigits = digits.TrimStart('0');
+
+            Add($"INC{digits}");
+
+            if (digits.Length <= 7)
+                Add($"INC{digits.PadLeft(7, '0')}");
+
+            if (!string.IsNullOrWhiteSpace(unpaddedDigits))
+                Add($"INC{unpaddedDigits}");
+        }
+
+        return candidates;
     }
 
     public async Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default)

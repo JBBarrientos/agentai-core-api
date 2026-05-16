@@ -4,7 +4,9 @@ public static class NotificationModule
 {
     public static IServiceCollection AddNotificationModule(this IServiceCollection services)
     {
-        services.AddHttpClient<INotificationSender, TelegramNotificationSender>();
+        services.AddHttpClient<ITelegramMessageSender, TelegramMessageSender>();
+        services.AddScoped<INotificationSender, TelegramNotificationSender>();
+        services.AddScoped<ITelegramWebhookService, TelegramWebhookService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddSingleton<INotificationPollingStateStore, FileNotificationPollingStateStore>();
         services.AddHostedService<NotificationTicketPollingWorker>();
