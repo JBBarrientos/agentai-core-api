@@ -14,6 +14,8 @@ using AgentAI.Modules.AuditLog;
 using AgentAI.Modules.AgentRuns;
 using AgentAI.Modules.AgentSteps;
 using AgentAI.Modules.KbUsages;
+using AgentAI.Modules.ServiceNow;
+using AgentAI.Modules.Notifications;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -50,6 +52,8 @@ builder.Services.Configure<CognitoOptions>(
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
 builder.Services.AddQueueModule(builder.Configuration, builder.Environment);
+builder.Services.AddServiceNowModule();
+builder.Services.AddNotificationModule();
 
 builder.Services.AddCors(options =>
 {
@@ -75,6 +79,7 @@ app.MapAuditLogModule();
 app.MapAgentRunModule();
 app.MapAgentStepModule();
 app.MapKbUsageModule();
+app.MapNotificationModule();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -107,8 +112,9 @@ app.MapGet("/weatherforecast", () =>
 .RequireAuthorization();
 
 
-using (var scope = app.Services.CreateScope())
+if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
