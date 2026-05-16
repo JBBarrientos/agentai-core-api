@@ -18,8 +18,8 @@ public static class AgentRunEndpoints
 
         group.MapPost("/", async (CreateAgentRunRequest req, IAgentRunService service, CancellationToken ct) =>
         {
-            await service.CreateAsync(req, ct);
-            return Results.Created();
+            var run = await service.CreateAsync(req, ct);
+            return Results.Created($"/agent-runs/{run.Id}", run);
         });
 
         group.MapDelete("/{id:int}", async (int id, IAgentRunService service, CancellationToken ct) =>

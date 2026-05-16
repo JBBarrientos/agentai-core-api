@@ -25,7 +25,7 @@ public class AgentRunService : IAgentRunService
         return run is null ? null : ToResponse(run);
     }
 
-    public async Task CreateAsync(CreateAgentRunRequest req, CancellationToken ct = default)
+    public async Task<AgentRunResponse> CreateAsync(CreateAgentRunRequest req, CancellationToken ct = default)
     {
         var run = new AgentRun
         {
@@ -34,6 +34,14 @@ public class AgentRunService : IAgentRunService
             StartedAt = DateTime.UtcNow
         };
         await _repository.AddAsync(run, ct);
+
+        return new AgentRunResponse(
+            Id: run.Id,
+            TicketId: run.TicketId,
+            Status: run.Status,
+            StartedAt: run.StartedAt,
+            EndedAt: run.EndedAt
+        );
     }
 
     public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)

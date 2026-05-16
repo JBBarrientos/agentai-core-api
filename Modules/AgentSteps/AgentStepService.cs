@@ -25,7 +25,7 @@ public class AgentStepService : IAgentStepService
         return step is null ? null : ToResponse(step);
     }
 
-    public async Task CreateAsync(CreateAgentStepRequest req, CancellationToken ct = default)
+    public async Task<AgentStepResponse> CreateAsync(CreateAgentStepRequest req, CancellationToken ct = default)
     {
         var step = new AgentStep
         {
@@ -37,6 +37,16 @@ public class AgentStepService : IAgentStepService
             CreatedAt = DateTime.UtcNow
         };
         await _repository.AddAsync(step, ct);
+
+        return new AgentStepResponse(
+            Id: step.Id,
+            AgentRunId: step.AgentRunId,
+            AgentType: step.AgentType,
+            InputData: step.InputData,
+            OutputData: step.OutputData,
+            Status: step.Status,
+            CreatedAt: step.CreatedAt
+        );
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateAgentStepRequest req, CancellationToken ct = default)
