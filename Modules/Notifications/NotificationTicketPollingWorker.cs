@@ -1,19 +1,19 @@
 using AgentAI.Modules.ServiceNow;
 
-namespace AgentAI.Modules.Teams;
+namespace AgentAI.Modules.Notifications;
 
-public sealed class TeamsTicketPollingWorker : BackgroundService
+public sealed class NotificationTicketPollingWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _configuration;
-    private readonly ILogger<TeamsTicketPollingWorker> _logger;
+    private readonly ILogger<NotificationTicketPollingWorker> _logger;
     private bool _isStartup = true;
-    private TeamsPollingState _state = new();
+    private NotificationPollingState _state = new();
 
-    public TeamsTicketPollingWorker(
+    public NotificationTicketPollingWorker(
         IServiceScopeFactory scopeFactory,
         IConfiguration configuration,
-        ILogger<TeamsTicketPollingWorker> logger)
+        ILogger<NotificationTicketPollingWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _configuration = configuration;
@@ -22,24 +22,23 @@ public sealed class TeamsTicketPollingWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_configuration.GetValue("Teams:PollingEnabled", false))
+        if (!_configuration.GetValue("Notifications:PollingEnabled", false))
         {
-            _logger.LogInformation("Teams ticket polling is disabled.");
+            _logger.LogInformation("Notification ticket polling is disabled.");
             return;
         }
 
-        var intervalSeconds = Math.Max(_configuration.GetValue("Teams:PollingIntervalSeconds", 60), 10);
-        var startupLookbackMinutes = Math.Max(_configuration.GetValue("Teams:PollingStartupLookbackMinutes", 2), 0);
+        var intervalSeconds = Math.Max(_configuration.GetValue("Notifications:PollingIntervalSeconds", 60), 10);
         var interval = TimeSpan.FromSeconds(intervalSeconds);
 
         using (var scope = _scopeFactory.CreateScope())
         {
-            var stateStore = scope.ServiceProvider.GetRequiredService<ITeamsPollingStateStore>();
+            var stateStore = scope.ServiceProvider.GetRequiredService<INotificationPollingStateStore>();
             _state = await stateStore.LoadAsync(stoppingToken);
         }
 
         _logger.LogInformation(
-            "Teams ticket polling started. Interval: {IntervalSeconds} seconds. Last processed: {LastProcessedTicketNumber} at {LastProcessedOpenedAtUtc}.",
+            "Notification ticket polling started. Interval: {IntervalSeconds} seconds. Last processed: {LastProcessedTicketNumber} at {LastProcessedOpenedAtUtc}.",
             intervalSeconds,
             string.IsNullOrWhiteSpace(_state.LastProcessedTicketNumber) ? "(none)" : _state.LastProcessedTicketNumber,
             _state.LastProcessedOpenedAtUtc);
@@ -56,7 +55,7 @@ public sealed class TeamsTicketPollingWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Teams ticket polling failed.");
+                _logger.LogError(ex, "Notification ticket polling failed.");
             }
 
             await Task.Delay(interval, stoppingToken);
@@ -67,14 +66,14 @@ public sealed class TeamsTicketPollingWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var serviceNow = scope.ServiceProvider.GetRequiredService<IServiceNowConnector>();
-        var notifications = scope.ServiceProvider.GetRequiredService<ITeamsNotificationService>();
-        var stateStore = scope.ServiceProvider.GetRequiredService<ITeamsPollingStateStore>();
+        var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
+        var stateStore = scope.ServiceProvider.GetRequiredService<INotificationPollingStateStore>();
 
-        var limit = Math.Max(_configuration.GetValue("Teams:PollingLimit", 20), 1);
-        var maxPages = Math.Max(_configuration.GetValue("Teams:PollingMaxPages", 5), 1);
+        var limit = Math.Max(_configuration.GetValue("Notifications:PollingLimit", 20), 1);
+        var maxPages = Math.Max(_configuration.GetValue("Notifications:PollingMaxPages", 5), 1);
         var query = BuildPollingQuery();
 
-        var notifyExistingOnStartup = _configuration.GetValue("Teams:NotifyExistingOnStartup", false);
+        var notifyExistingOnStartup = _configuration.GetValue("Notifications:NotifyExistingOnStartup", false);
         var hasPersistedState = _state.LastProcessedOpenedAtUtc is not null || _state.ProcessedTicketSysIds.Count > 0;
         var tickets = await serviceNow.GetIncidentsPagedAsync(limit, maxPages, query, ct);
         var knownOnStartupCount = 0;
@@ -107,10 +106,10 @@ public sealed class TeamsTicketPollingWorker : BackgroundService
         }
 
         if (knownOnStartupCount > 0)
-            _logger.LogInformation("Teams polling marked {Count} existing tickets as already known on startup.", knownOnStartupCount);
+            _logger.LogInformation("Notification polling marked {Count} existing tickets as already known on startup.", knownOnStartupCount);
 
         if (tickets.Count > 0 || notifiedCount > 0)
-            _logger.LogInformation("Teams polling checked {CheckedCount} tickets and sent {NotifiedCount} notifications.", tickets.Count, notifiedCount);
+            _logger.LogInformation("Notification polling checked {CheckedCount} tickets and sent {NotifiedCount} notifications.", tickets.Count, notifiedCount);
 
         if (tickets.Count > 0)
             await stateStore.SaveAsync(_state, ct);
@@ -120,12 +119,12 @@ public sealed class TeamsTicketPollingWorker : BackgroundService
 
     private string BuildPollingQuery()
     {
-        var configuredQuery = _configuration["Teams:PollingQuery"];
+        var configuredQuery = _configuration["Notifications:PollingQuery"];
         if (!string.IsNullOrWhiteSpace(configuredQuery))
             return configuredQuery;
 
-        var startupLookbackMinutes = Math.Max(_configuration.GetValue("Teams:PollingStartupLookbackMinutes", 2), 0);
-        var overlapMinutes = Math.Max(_configuration.GetValue("Teams:PollingOverlapMinutes", 1), 0);
+        var startupLookbackMinutes = Math.Max(_configuration.GetValue("Notifications:PollingStartupLookbackMinutes", 2), 0);
+        var overlapMinutes = Math.Max(_configuration.GetValue("Notifications:PollingOverlapMinutes", 1), 0);
         var from = _state.LastProcessedOpenedAtUtc?.AddMinutes(-overlapMinutes)
             ?? DateTime.UtcNow.AddMinutes(-startupLookbackMinutes);
 

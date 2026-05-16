@@ -11,6 +11,7 @@ obj/
 *.user
 *.suo
 *.db
+.dotnet_home/
 
 # Secrets
 secrets.json

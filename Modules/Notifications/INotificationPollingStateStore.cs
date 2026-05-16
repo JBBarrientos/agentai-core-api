@@ -1,12 +1,12 @@
-namespace AgentAI.Modules.Teams;
+namespace AgentAI.Modules.Notifications;
 
-public interface ITeamsPollingStateStore
+public interface INotificationPollingStateStore
 {
-    Task<TeamsPollingState> LoadAsync(CancellationToken ct = default);
-    Task SaveAsync(TeamsPollingState state, CancellationToken ct = default);
+    Task<NotificationPollingState> LoadAsync(CancellationToken ct = default);
+    Task SaveAsync(NotificationPollingState state, CancellationToken ct = default);
 }
 
-public sealed class TeamsPollingState
+public sealed class NotificationPollingState
 {
     public DateTime? LastProcessedOpenedAtUtc { get; set; }
     public string LastProcessedTicketSysId { get; set; } = string.Empty;

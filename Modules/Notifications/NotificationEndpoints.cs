@@ -1,45 +1,45 @@
-namespace AgentAI.Modules.Teams;
+namespace AgentAI.Modules.Notifications;
 
-public static class TeamsEndpoints
+public static class NotificationEndpoints
 {
-    public static IEndpointRouteBuilder MapTeamsEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapNotificationEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/teams")
-            .WithTags("Teams")
+        var group = app.MapGroup("/notifications")
+            .WithTags("Notifications")
             .AllowAnonymous();
 
-        group.MapPost("/notifications/test", async (
-            SendTeamsTestNotificationRequest request,
-            ITeamsNotificationService service,
+        group.MapPost("/test", async (
+            SendTestNotificationRequest request,
+            INotificationService service,
             CancellationToken ct) =>
         {
             var result = await service.SendTestAsync(request.RecipientEmail, request.Message, ct);
             return Results.Ok(result);
         });
 
-        group.MapPost("/notifications/tickets/{sysId}/review-started", async (
+        group.MapPost("/tickets/{sysId}/review-started", async (
             string sysId,
-            ITeamsNotificationService service,
+            INotificationService service,
             CancellationToken ct) =>
         {
             var result = await service.NotifyReviewStartedAsync(sysId, ct);
             return Results.Ok(result);
         });
 
-        group.MapPost("/notifications/tickets/{sysId}/resolved", async (
+        group.MapPost("/tickets/{sysId}/resolved", async (
             string sysId,
             string? summary,
-            ITeamsNotificationService service,
+            INotificationService service,
             CancellationToken ct) =>
         {
             var result = await service.NotifyResolvedAsync(sysId, summary, ct);
             return Results.Ok(result);
         });
 
-        group.MapPost("/notifications/tickets/{sysId}/escalated", async (
+        group.MapPost("/tickets/{sysId}/escalated", async (
             string sysId,
             string? reason,
-            ITeamsNotificationService service,
+            INotificationService service,
             CancellationToken ct) =>
         {
             var result = await service.NotifyEscalatedAsync(sysId, reason, ct);

@@ -1,39 +1,32 @@
 using AgentAI.Modules.ServiceNow;
 
-namespace AgentAI.Modules.Teams;
+namespace AgentAI.Modules.Notifications;
 
-public sealed class TeamsNotificationService : ITeamsNotificationService
+public sealed class NotificationService : INotificationService
 {
     private readonly IServiceNowConnector _serviceNowConnector;
-    private readonly IMicrosoftGraphClient _graphClient;
-    private readonly ITeamsNotificationSender _sender;
+    private readonly INotificationSender _sender;
     private readonly IConfiguration _configuration;
 
-    public TeamsNotificationService(
+    public NotificationService(
         IServiceNowConnector serviceNowConnector,
-        IMicrosoftGraphClient graphClient,
-        ITeamsNotificationSender sender,
+        INotificationSender sender,
         IConfiguration configuration)
     {
         _serviceNowConnector = serviceNowConnector;
-        _graphClient = graphClient;
         _sender = sender;
         _configuration = configuration;
     }
 
-    public async Task<TeamsNotificationResult> SendTestAsync(string recipientEmail, string message, CancellationToken ct = default)
+    public async Task<NotificationResult> SendTestAsync(string recipientEmail, string message, CancellationToken ct = default)
     {
-        var user = await TryResolveGraphUserAsync(recipientEmail, ct);
-
-        var result = await _sender.SendAsync(new TeamsNotificationMessage(
+        return await _sender.SendAsync(new NotificationMessage(
             recipientEmail,
             "AgentAI test notification",
             message), ct);
-
-        return result with { RecipientUserId = user?.Id };
     }
 
-    public async Task<TeamsNotificationResult> NotifyReviewStartedAsync(string serviceNowSysId, CancellationToken ct = default)
+    public async Task<NotificationResult> NotifyReviewStartedAsync(string serviceNowSysId, CancellationToken ct = default)
     {
         var ticket = await GetTicketOrThrowAsync(serviceNowSysId, ct);
         var body = $"Hola {GetDisplayName(ticket)}, estamos revisando tu caso {ticket.Number}: \"{ticket.Title}\".";
@@ -44,7 +37,7 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
         return await SendTicketNotificationAsync(ticket, "Ticket en revision", body, ct);
     }
 
-    public async Task<TeamsNotificationResult> NotifyResolvedAsync(string serviceNowSysId, string? resolutionSummary = null, CancellationToken ct = default)
+    public async Task<NotificationResult> NotifyResolvedAsync(string serviceNowSysId, string? resolutionSummary = null, CancellationToken ct = default)
     {
         var ticket = await GetTicketOrThrowAsync(serviceNowSysId, ct);
         var summary = string.IsNullOrWhiteSpace(resolutionSummary)
@@ -58,7 +51,7 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
         return await SendTicketNotificationAsync(ticket, "Ticket resuelto", body, ct);
     }
 
-    public async Task<TeamsNotificationResult> NotifyEscalatedAsync(string serviceNowSysId, string? reason = null, CancellationToken ct = default)
+    public async Task<NotificationResult> NotifyEscalatedAsync(string serviceNowSysId, string? reason = null, CancellationToken ct = default)
     {
         var ticket = await GetTicketOrThrowAsync(serviceNowSysId, ct);
         var escalationReason = string.IsNullOrWhiteSpace(reason)
@@ -81,29 +74,18 @@ public sealed class TeamsNotificationService : ITeamsNotificationService
         return await SendTicketNotificationAsync(ticket, "Ticket derivado a soporte", body, ct);
     }
 
-    private async Task<TeamsNotificationResult> SendTicketNotificationAsync(ServiceNowIncident ticket, string subject, string body, CancellationToken ct)
+    private async Task<NotificationResult> SendTicketNotificationAsync(ServiceNowIncident ticket, string subject, string body, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(ticket.CreatedByEmail))
-            return new TeamsNotificationResult(false, "Teams", $"Ticket {ticket.Number} has no requester email.");
+        var recipient = string.IsNullOrWhiteSpace(ticket.CreatedByEmail)
+            ? "default"
+            : ticket.CreatedByEmail;
 
-        var user = await TryResolveGraphUserAsync(ticket.CreatedByEmail, ct);
-
-        var result = await _sender.SendAsync(new TeamsNotificationMessage(
-            ticket.CreatedByEmail,
+        return await _sender.SendAsync(new NotificationMessage(
+            recipient,
             subject,
             body,
             ticket.Number,
             ticket.SysId), ct);
-
-        return result with { RecipientUserId = user?.Id };
-    }
-
-    private async Task<TeamsUser?> TryResolveGraphUserAsync(string email, CancellationToken ct)
-    {
-        if (!_configuration.GetValue("MicrosoftGraph:ResolveUsersEnabled", false))
-            return null;
-
-        return await _graphClient.GetUserByEmailAsync(email, ct);
     }
 
     private async Task<ServiceNowIncident> GetTicketOrThrowAsync(string serviceNowSysId, CancellationToken ct)

@@ -3,10 +3,11 @@ using AgentAI.Modules.Health;
 using AgentAI.Data;
 using AgentAI.Extensions;
 using AgentAI.Modules.Tickets;
-using AgentAI.Modules.Teams;
+using AgentAI.Modules.Notifications;
 using AgentAI.Modules.Authentication;
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
+using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,12 +24,17 @@ builder.Configuration
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseMySql(
+        connectionString,
+        new MySqlServerVersion(new Version(8, 0, 0))));
+
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
-builder.Services.AddTeamsModule(builder.Configuration);
+builder.Services.AddNotificationModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
@@ -44,7 +50,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthModule();
 app.MapTicketModule();
-app.MapTeamsModule();
+app.MapNotificationModule();
 app.MapAuthenticationModule();
 
 // Configure the HTTP request pipeline.

@@ -9,7 +9,7 @@ La integracion actual permite:
 - Obtener un token OAuth desde ServiceNow.
 - Consultar tickets en vivo desde `/api/now/table/incident`.
 - Exponer esos tickets desde la API local.
-- Preparar una sincronizacion hacia la base local cuando SQL Server/LocalDB este disponible.
+- Preparar una sincronizacion hacia la base local cuando MySQL este configurado.
 
 ## Flujo OAuth Validado
 
@@ -88,7 +88,7 @@ dotnet user-secrets set 'ServiceNow:Username' 'admin'
 dotnet user-secrets set 'ServiceNow:Password' 'TU_PASSWORD'
 ```
 
-Para probar sin SQL Server/LocalDB:
+Para probar sin base local:
 
 ```bash
 dotnet user-secrets set 'Database:MigrateOnStartup' 'false'
@@ -123,7 +123,7 @@ Ejemplo:
 curl -X POST "http://localhost:5038/tickets/sync-servicenow?limit=100&query=ORDERBYDESCsys_updated_on"
 ```
 
-Este endpoint requiere que SQL Server/LocalDB este configurado, porque guarda o actualiza registros en la tabla local `Tickets`.
+Este endpoint requiere que MySQL este configurado, porque guarda o actualiza registros en la tabla local `Tickets`.
 
 ## Query Para Traer Todos Los Tickets
 
@@ -197,7 +197,7 @@ Configuracion actual recomendada:
   "RetryCount": 3,
   "RetryBaseDelaySeconds": 2
 },
-"Teams": {
+"Notifications": {
   "PollingIntervalSeconds": 30,
   "PollingLimit": 20,
   "PollingMaxPages": 5
@@ -231,8 +231,8 @@ sysparm_offset
 Configuracion:
 
 ```text
-Teams:PollingLimit    -> cantidad por pagina
-Teams:PollingMaxPages -> maximo de paginas por ciclo
+Notifications:PollingLimit    -> cantidad por pagina
+Notifications:PollingMaxPages -> maximo de paginas por ciclo
 ```
 
 Ejemplo con `PollingLimit=20` y `PollingMaxPages=5`:
@@ -394,7 +394,7 @@ Se hizo opcional la migracion automatica de Entity Framework:
 Database:MigrateOnStartup
 ```
 
-Esto fue necesario porque la maquina local no tenia SQL Server LocalDB instalado y la API no podia iniciar.
+Esto permite levantar la API aunque la base local no este disponible.
 
 ### `Extensions/ExceptionExtensions.cs`
 
@@ -427,7 +427,7 @@ dotnet user-secrets set 'ServiceNow:SyncLimit' '100'
 dotnet user-secrets set 'ServiceNow:SyncQuery' 'ORDERBYDESCsys_updated_on'
 ```
 
-Por ahora debe quedar desactivado si no hay SQL Server/LocalDB:
+Por ahora debe quedar desactivado si no hay MySQL configurado:
 
 ```bash
 dotnet user-secrets set 'ServiceNow:SyncEnabled' 'false'
@@ -445,144 +445,91 @@ Esto trae tickets en vivo desde ServiceNow.
 
 Pendiente:
 
-- Instalar o configurar SQL Server/LocalDB.
+- Instalar o configurar MySQL.
 - Activar `/tickets/sync-servicenow`.
 - Activar `ServiceNowSyncWorker`.
 - Agregar paginacion con `sysparm_offset` si se necesita descargar todos los tickets en lotes.
 - Rotar secretos de ServiceNow porque fueron expuestos durante las pruebas.
 
-# Preparacion para Microsoft Teams
+# Preparacion de notificaciones por Telegram
 
 ## Objetivo
 
-Se agrego una estructura inicial para que la API pueda notificar por Teams cuando la IA tome, resuelva o escale un ticket.
+Se agrego una estructura inicial para que la API pueda notificar por Telegram cuando la IA tome, resuelva o escale un ticket.
 
-Por ahora el envio real a Teams queda desactivado/fake, porque todavia falta el consentimiento de administrador en Microsoft Graph. Esto permite probar el flujo sin depender de permisos externos.
-
-## App de Azure
-
-La app creada en Microsoft Entra ID es:
-
-```text
-AgentAI Teams Notifications
-```
-
-Permiso agregado:
-
-```text
-Microsoft Graph / Application permission / User.Read.All
-```
-
-Estado actual esperado hasta que lo apruebe un admin:
-
-```text
-No concedido para Asociacion ORT Argentina
-```
-
-Este permiso es necesario para que la API pueda buscar usuarios por email sin que un usuario tenga una sesion iniciada.
+Por ahora el envio real a Telegram se usa como canal simple de notificacion para pruebas y demos.
 
 ## Configuracion local
 
-Guardar los datos de Microsoft Graph en `user-secrets`:
+Guardar los datos del bot de Telegram en `user-secrets`:
 
 ```bash
-dotnet user-secrets set 'MicrosoftGraph:TenantId' 'TU_TENANT_ID'
-dotnet user-secrets set 'MicrosoftGraph:ClientId' 'TU_CLIENT_ID'
-dotnet user-secrets set 'MicrosoftGraph:ClientSecret' 'TU_CLIENT_SECRET'
+dotnet user-secrets set 'Telegram:BotToken' 'TU_BOT_TOKEN'
+dotnet user-secrets set 'Telegram:DefaultChatId' 'TU_CHAT_ID'
 ```
 
-Mientras el permiso no este aprobado, dejar apagada la resolucion real de usuarios:
+Opcionalmente, si se quiere enviar a chats distintos segun el email del solicitante:
 
 ```bash
-dotnet user-secrets set 'MicrosoftGraph:ResolveUsersEnabled' 'false'
-```
-
-Cuando el admin apruebe `User.Read.All`, activar:
-
-```bash
-dotnet user-secrets set 'MicrosoftGraph:ResolveUsersEnabled' 'true'
+dotnet user-secrets set 'Telegram:RecipientChatIds:usuario@dominio.com' 'CHAT_ID_DEL_USUARIO'
 ```
 
 Para variables de entorno, .NET usa doble guion bajo:
 
 ```text
-MicrosoftGraph__TenantId=...
-MicrosoftGraph__ClientId=...
-MicrosoftGraph__ClientSecret=...
-MicrosoftGraph__ResolveUsersEnabled=true
+Telegram__BotToken=...
+Telegram__DefaultChatId=...
+Telegram__RecipientChatIds__usuario@dominio.com=...
 ```
 
-Tambien se soportan variables estilo:
+## Clases creadas para notificaciones
 
-```text
-MICROSOFT_GRAPH_TENANT_ID=...
-MICROSOFT_GRAPH_CLIENT_ID=...
-MICROSOFT_GRAPH_CLIENT_SECRET=...
-```
-
-## Clases creadas para Teams
-
-### `Modules/Teams/MicrosoftGraphClient.cs`
-
-Cliente HTTP para Microsoft Graph.
-
-Hace:
-
-- OAuth client credentials contra Microsoft Entra ID.
-- Usa scope `https://graph.microsoft.com/.default`.
-- Busca usuarios por email con:
-
-```text
-GET https://graph.microsoft.com/v1.0/users/{email}?$select=id,displayName,mail,userPrincipalName
-```
-
-Esto queda listo para cuando `User.Read.All` este aprobado.
-
-### `Modules/Teams/ITeamsNotificationSender.cs`
+### `Modules/Notifications/INotificationSender.cs`
 
 Contrato para enviar notificaciones.
 
-Sirve para que el resto del sistema no dependa de si el envio es fake, Teams real, email u otro canal.
+Sirve para que el resto del sistema no dependa de los detalles tecnicos del canal de envio.
 
-### `Modules/Teams/FakeTeamsNotificationSender.cs`
+### `Modules/Notifications/TelegramNotificationSender.cs`
 
-Implementacion temporal.
+Implementacion de envio por Telegram Bot API.
 
-No envia a Teams real. Escribe en logs algo como:
+Envia mensajes de texto usando:
 
 ```text
-[Teams fake] To=usuario@dominio.com Ticket=INC0010008 Subject=Ticket en revision Body=...
+POST https://api.telegram.org/bot{BotToken}/sendMessage
 ```
 
-Esto permite probar endpoints y flujo de negocio sin permisos de Graph.
+Usa `Telegram:BotToken` y `Telegram:DefaultChatId`.
 
-### `Modules/Teams/TeamsNotificationService.cs`
+### `Modules/Notifications/NotificationService.cs`
 
 Orquesta las notificaciones:
 
 - Busca el ticket en ServiceNow por `sys_id`.
 - Toma `CreatedByEmail` como destinatario.
-- Opcionalmente resuelve el usuario en Graph si `MicrosoftGraph:ResolveUsersEnabled=true`.
+- Usa ese email para buscar un `chat_id` en `Telegram:RecipientChatIds`.
+- Si no hay mapeo especifico, usa `Telegram:DefaultChatId`.
 - Arma mensajes para:
   - ticket en revision
   - ticket resuelto
   - ticket escalado a soporte
-- Envia usando `ITeamsNotificationSender`.
+- Envia usando `INotificationSender`.
 
-### `Modules/Teams/TeamsEndpoints.cs`
+### `Modules/Notifications/NotificationEndpoints.cs`
 
 Expone endpoints de prueba.
 
-### `Modules/Teams/TeamsModule.cs`
+### `Modules/Notifications/NotificationModule.cs`
 
-Registra los servicios de Teams en Dependency Injection.
+Registra los servicios de notificaciones en Dependency Injection.
 
 ## Endpoints agregados
 
-### Probar notificacion fake
+### Probar notificacion por Telegram
 
 ```text
-POST /teams/notifications/test
+POST /notifications/test
 ```
 
 Body:
@@ -597,13 +544,13 @@ Body:
 ### Avisar que el ticket esta en revision
 
 ```text
-POST /teams/notifications/tickets/{sysId}/review-started
+POST /notifications/tickets/{sysId}/review-started
 ```
 
 Ejemplo:
 
 ```bash
-curl -X POST "http://localhost:5038/teams/notifications/tickets/07b6916793e8071061d8fb97dd03d63f/review-started"
+curl -X POST "http://localhost:5038/notifications/tickets/07b6916793e8071061d8fb97dd03d63f/review-started"
 ```
 
 Este endpoint tambien actualiza ServiceNow:
@@ -618,7 +565,7 @@ comments = mensaje visible para el usuario
 ### Avisar que el ticket fue resuelto
 
 ```text
-POST /teams/notifications/tickets/{sysId}/resolved?summary=Texto
+POST /notifications/tickets/{sysId}/resolved?summary=Texto
 ```
 
 Este endpoint tambien actualiza ServiceNow:
@@ -634,7 +581,7 @@ work_notes = AgentAI resolvio el caso
 ### Avisar que el ticket fue escalado
 
 ```text
-POST /teams/notifications/tickets/{sysId}/escalated?reason=Texto
+POST /notifications/tickets/{sysId}/escalated?reason=Texto
 ```
 
 Este endpoint agrega informacion en ServiceNow:
@@ -659,21 +606,22 @@ El valor actual corresponde al grupo:
 Incident Management
 ```
 
-## Que falta para Teams real
+## Que falta para una mensajeria productiva
 
-El permiso `User.Read.All` solo permite buscar usuarios. Para mandar mensajes reales por Teams falta definir la estrategia final:
+La implementacion actual envia mensajes salientes por Telegram. Para usarla en produccion falta definir:
 
-- Bot de Teams con instalacion en usuarios y mensajes proactivos.
-- O envio via Microsoft Graph con permisos adicionales y modelo de chat permitido por el tenant.
+- Si todos los avisos van a un chat/grupo comun con `Telegram:DefaultChatId`.
+- O si se mapeara cada email de ServiceNow a un chat_id con `Telegram:RecipientChatIds:{email}`.
+- Donde se guardara ese mapeo si deja de alcanzar `user-secrets`.
 
-La estructura actual deja preparado el flujo para cambiar solo la implementacion de `ITeamsNotificationSender` cuando este definida la estrategia real.
+La estructura actual deja preparado el flujo para cambiar solo la implementacion de `INotificationSender` cuando este definida la estrategia real.
 
 ## Polling de tickets nuevos
 
 Se agrego un worker:
 
 ```text
-Modules/Teams/TeamsTicketPollingWorker.cs
+Modules/Notifications/NotificationTicketPollingWorker.cs
 ```
 
 Este worker consulta ServiceNow periodicamente y dispara la notificacion de "ticket en revision" cuando detecta un ticket nuevo.
@@ -681,7 +629,7 @@ Este worker consulta ServiceNow periodicamente y dispara la notificacion de "tic
 Por defecto esta apagado:
 
 ```json
-"Teams": {
+"Notifications": {
   "PollingEnabled": false
 }
 ```
@@ -689,15 +637,15 @@ Por defecto esta apagado:
 Para probarlo localmente:
 
 ```bash
-dotnet user-secrets set 'Teams:PollingEnabled' 'true'
-dotnet user-secrets set 'Teams:PollingIntervalSeconds' '30'
-dotnet user-secrets set 'Teams:PollingLimit' '20'
-dotnet user-secrets set 'Teams:PollingStartupLookbackMinutes' '2'
-dotnet user-secrets set 'Teams:NotifyExistingOnStartup' 'false'
-dotnet user-secrets remove 'Teams:PollingQuery'
+dotnet user-secrets set 'Notifications:PollingEnabled' 'true'
+dotnet user-secrets set 'Notifications:PollingIntervalSeconds' '30'
+dotnet user-secrets set 'Notifications:PollingLimit' '20'
+dotnet user-secrets set 'Notifications:PollingStartupLookbackMinutes' '2'
+dotnet user-secrets set 'Notifications:NotifyExistingOnStartup' 'false'
+dotnet user-secrets remove 'Notifications:PollingQuery'
 ```
 
-Con `Teams:PollingQuery` vacio, el worker arma una query incremental usando `sys_created_on` desde el ultimo polling. Esto evita revisar todos los tickets en cada arranque o intervalo.
+Con `Notifications:PollingQuery` vacio, el worker arma una query incremental usando `sys_created_on` desde el ultimo polling. Esto evita revisar todos los tickets en cada arranque o intervalo.
 
 Query generada internamente:
 
@@ -712,7 +660,7 @@ Con `NotifyExistingOnStartup=false`, el primer polling solo marca como conocidos
 El estado ya no queda solo en memoria. Se guarda en:
 
 ```text
-App_Data/teams-ticket-polling-state.json
+App_Data/notification-ticket-polling-state.json
 ```
 
 Ese archivo queda ignorado por git.
@@ -741,7 +689,7 @@ API encendida
 Para produccion, lo ideal sigue siendo mover esta implementacion a una tabla SQL o a un storage persistente administrado. La API ya usa una interfaz:
 
 ```text
-ITeamsPollingStateStore
+INotificationPollingStateStore
 ```
 
 Por eso se puede reemplazar el archivo por una tabla sin cambiar el worker.
@@ -751,8 +699,8 @@ Flujo actual:
 ```text
 ServiceNow ticket nuevo
   -> polling lo detecta
-  -> TeamsNotificationService arma el mensaje
-  -> FakeTeamsNotificationSender lo escribe en logs
+  -> NotificationService arma el mensaje
+  -> TelegramNotificationSender envia el mensaje
 ```
 
-Cuando Teams real este listo, se reemplaza `FakeTeamsNotificationSender` por una implementacion real sin cambiar el worker.
+Si mas adelante se quiere cambiar el canal de envio, se puede reemplazar la implementacion de `INotificationSender` sin cambiar el worker.
