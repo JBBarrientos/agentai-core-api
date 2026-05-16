@@ -1,4 +1,6 @@
-﻿using AgentAI.Modules.Tickets.Dto;
+﻿using AgentAI.Modules.Queue;
+using System.Text.Json;
+using AgentAI.Modules.Tickets.Dto;
 
 namespace AgentAI.Modules.Tickets;
 
@@ -6,20 +8,24 @@ public class TicketService : ITicketService
 {
     private readonly ITicketRepository _repository;
     private readonly ILogger<TicketService> _logger;
+    private readonly IQueueService _queueService;
 
-    public TicketService(ITicketRepository repository, ILogger<TicketService> logger)
+    public TicketService(
+        ITicketRepository repository,
+        ILogger<TicketService> logger,
+        [FromKeyedServices("inbound")] IQueueService queueService)
     {
         _repository = repository;
         _logger = logger;
+        _queueService = queueService;
     }
-
     public async Task<IEnumerable<Ticket>> GetAllAsync(CancellationToken ct = default)
         => await _repository.GetAllAsync(ct);
 
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
 
-    public async Task CreateAsync(CreateTicketRequest req, CancellationToken ct = default)
+    public async Task<TicketResponse> CreateAsync(CreateTicketRequest req, CancellationToken ct = default)
     {
         var ticket = new Ticket
         {
@@ -35,8 +41,23 @@ public class TicketService : ITicketService
             UpdatedAt = DateTime.UtcNow,
             LastSyncedAt = DateTime.UtcNow
         };
-
         await _repository.AddAsync(ticket, ct);
+
+        return new TicketResponse(
+            Id: ticket.Id,
+            SysId: ticket.SysId,
+            Number: ticket.Number,
+            Title: ticket.Title,
+            Description: ticket.Description,
+            State: ticket.State,
+            StateLabel: ticket.StateLabel,
+            Priority: ticket.Priority,
+            PriorityLabel: ticket.PriorityLabel,
+            OpenedAt: ticket.OpenedAt,
+            UpdatedAt: ticket.UpdatedAt,
+            ResolvedAt: ticket.ResolvedAt,
+            LastSyncedAt: ticket.LastSyncedAt
+        );
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateTicketRequest req, CancellationToken ct = default)
@@ -61,5 +82,18 @@ public class TicketService : ITicketService
 
     public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
         => await _repository.DeleteAsync(id, ct);
+
+    public async Task ProcessAsync(int ticketId, CancellationToken ct = default)
+    {
+        var ticket = await _repository.GetByIdAsync(ticketId, ct);
+        if (ticket is null) throw new Exception($"Ticket {ticketId} not found");
+
+        await _queueService.SendMessageAsync(JsonSerializer.Serialize(new InboundMessage(
+            TicketId: ticket.Id.ToString(),
+            CorrelationId: Guid.NewGuid().ToString(),
+            CustomerId: ticket.SysId,
+            Metadata: []
+        )), ct);
+    }
 
 }

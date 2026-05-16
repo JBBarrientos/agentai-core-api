@@ -18,8 +18,8 @@ public static class AgentStepEndpoints
 
         group.MapPost("/", async (CreateAgentStepRequest req, IAgentStepService service, CancellationToken ct) =>
         {
-            await service.CreateAsync(req, ct);
-            return Results.Created();
+            var step = await service.CreateAsync(req, ct);
+            return Results.Created($"/agent-steps/{step.Id}", step);
         });
 
         group.MapPut("/{id:int}", async (int id, UpdateAgentStepRequest req, IAgentStepService service, CancellationToken ct) =>

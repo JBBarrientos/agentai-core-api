@@ -49,6 +49,8 @@ builder.Services.Configure<CognitoOptions>(
 
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
+builder.Services.AddQueueModule(builder.Configuration, builder.Environment);
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -58,11 +60,6 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader();
     });
 });
-
-if (!builder.Environment.IsDevelopment())
-{
-    builder.Services.AddQueueModule(builder.Configuration);
-}
 
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
@@ -109,16 +106,6 @@ app.MapGet("/weatherforecast", () =>
 .WithOpenApi()
 .RequireAuthorization();
 
-app.MapPost("/dev/queue/send", async ([FromServices] InboundQueueService queue) =>
-{
-    await queue.SendAsync(new InboundMessage(
-        TicketId: "INC0001",
-        CorrelationId: Guid.NewGuid().ToString(),
-        CustomerId: "juan.perez@empresa.com",
-        Metadata: []
-    ));
-    return Results.Ok("Message sent to inbound queue");
-});
 
 using (var scope = app.Services.CreateScope())
 {

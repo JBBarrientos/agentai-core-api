@@ -33,6 +33,13 @@ public static class TicketEndpoints
                 ? Results.NoContent()
                 : Results.NotFound());
 
+        group.MapPost("/process", async (CreateTicketRequest req, ITicketService service, CancellationToken ct) =>
+        {
+            var ticket = await service.CreateAsync(req, ct);
+            await service.ProcessAsync(ticket.Id, ct);
+            return Results.Ok(ticket);
+        });
+
         return app;
     }
 }
