@@ -34,6 +34,8 @@ public class ActionDispatcher
         };
     }
 
+    private record OutboundMessagePayload(int ConversationId, string Body, string MessageType);
+
     private async Task HandleSendMessageAsync(OutboundMessage message)
     {
         if (string.IsNullOrEmpty(message.Payload))
@@ -42,7 +44,7 @@ public class ActionDispatcher
             return;
         }
 
-        var payload = JsonSerializer.Deserialize<IncomingMessagePayload>(message.Payload);
+        var payload = JsonSerializer.Deserialize<OutboundMessagePayload>(message.Payload);
         if (payload is null)
         {
             _logger.LogWarning("[SEND_MESSAGE] Could not deserialize payload for ticket {TicketId}", message.TicketId);
@@ -50,7 +52,7 @@ public class ActionDispatcher
         }
 
         await _incomingMessageService.ProcessOutboundAsync(new IncomingMessageRequest(
-            ConversationSysId: payload.ConversationSysId,
+            ConversationId: payload.ConversationId,
             TicketId: null,
             SysId: Guid.NewGuid().ToString(),
             SenderType: "bot",
@@ -62,7 +64,6 @@ public class ActionDispatcher
 
         _logger.LogInformation("[SEND_MESSAGE] Persisted bot response for ticket {TicketId}", message.TicketId);
     }
-
     private Task HandleWhatsAppAsync(OutboundMessage message)
     {
         _logger.LogInformation("[WHATSAPP] Would send message for ticket {TicketId}", message.TicketId);

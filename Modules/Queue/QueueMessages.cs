@@ -6,11 +6,12 @@ public record InboundMessage(
     string Action,
     string? Payload
 );
+
 public record OutboundMessage(
     string TicketId,
     string CorrelationId,
-    bool Found,
-    string? TargetAgent,
-    string? Action,
-    string? Payload
+    string CustomerId,
+    string Action,
+    string? Payload,
+    string? TargetAgent
 );
