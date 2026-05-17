@@ -27,6 +27,12 @@ public static class MessageEndpoints
             return Results.Created();
         });
 
+        group.MapPost("/incoming", async (IncomingMessageRequest req, IIncomingMessageService incomingService, CancellationToken ct) =>
+        {
+            var response = await incomingService.ProcessIncomingAsync(req, ct);
+            return Results.Created($"/messages/{response.MessageId}", response);
+        });
+
         group.MapPut("/{id:int}", async (int id, UpdateMessageRequest req, IMessageService service, CancellationToken ct) =>
             await service.UpdateAsync(id, req, ct)
                 ? Results.NoContent()

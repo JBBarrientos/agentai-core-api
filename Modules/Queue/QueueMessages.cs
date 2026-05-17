@@ -3,7 +3,8 @@ public record InboundMessage(
     string TicketId,
     string CorrelationId,
     string CustomerId,
-    Dictionary<string, string> Metadata
+    string Action,
+    string? Payload
 );
 public record OutboundMessage(
     string TicketId,

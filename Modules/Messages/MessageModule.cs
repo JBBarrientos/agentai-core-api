@@ -6,6 +6,7 @@ public static class MessageModule
     {
         services.AddScoped<IMessageRepository, MessageRepository>();
         services.AddScoped<IMessageService, MessageService>();
+        services.AddScoped<IIncomingMessageService, IncomingMessageService>();
         return services;
     }
 
