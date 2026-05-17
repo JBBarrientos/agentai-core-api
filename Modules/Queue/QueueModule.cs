@@ -23,7 +23,7 @@ public static class QueueModule
         services.AddKeyedSingleton<IQueueService>("outbound", (sp, _) =>
             new SqsMessageQueue(sp.GetRequiredService<IAmazonSQS>(), outboundUrl));
 
-        services.AddSingleton<ActionDispatcher>();
+        services.AddScoped<ActionDispatcher>();
         services.AddHostedService<OutboundQueueWorker>();
         services.AddScoped<InboundQueueService>();
 

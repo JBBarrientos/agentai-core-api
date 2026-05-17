@@ -92,7 +92,8 @@ public class TicketService : ITicketService
             TicketId: ticket.Id.ToString(),
             CorrelationId: Guid.NewGuid().ToString(),
             CustomerId: ticket.SysId,
-            Metadata: []
+            Action: "new_ticket",
+            Payload: null
         )), ct);
     }
 
