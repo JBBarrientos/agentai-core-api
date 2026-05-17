@@ -1,7 +1,5 @@
-﻿namespace AgentAI.Modules.Messages.Dto;
-
-public record IncomingMessageRequest(
-    string ConversationSysId,
+﻿public record IncomingMessageRequest(
+    int ConversationId,
     int? TicketId,
     string SysId,
     string SenderType,

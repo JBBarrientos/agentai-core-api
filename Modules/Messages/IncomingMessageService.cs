@@ -92,18 +92,17 @@ public class IncomingMessageService : IIncomingMessageService
         IncomingMessageRequest req,
         CancellationToken ct)
     {
-        var existing = await _conversationRepository.GetBySysIdAsync(req.ConversationSysId, ct);
+        var existing = await _conversationRepository.GetByIdAsync(req.ConversationId, ct);
         if (existing is not null)
             return (existing, false);
 
         if (req.TicketId is null)
             throw new InvalidOperationException(
-                $"No conversation found for SysId '{req.ConversationSysId}' " +
+                $"No conversation found for Id '{req.ConversationId}' " +
                 "and no TicketId was provided to create one.");
 
         var conversation = new Conversation
         {
-            SysId = req.ConversationSysId,
             TicketId = req.TicketId.Value,
             Channel = "telegram",
             Status = "active",
@@ -112,11 +111,6 @@ public class IncomingMessageService : IIncomingMessageService
         };
 
         await _conversationRepository.AddAsync(conversation, ct);
-
-        _logger.LogInformation(
-            "Created conversation {ConversationId} (SysId={SysId}) for ticket {TicketId}",
-            conversation.Id, conversation.SysId, conversation.TicketId);
-
         return (conversation, true);
     }
 
