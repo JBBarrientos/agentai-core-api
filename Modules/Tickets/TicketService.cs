@@ -25,6 +25,9 @@ public class TicketService : ITicketService
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
 
+    public async Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default)
+        => await _repository.GetByNumberAsync(number, ct);
+
     public async Task<IEnumerable<ServiceNowTicketResponse>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
     {
         var incidents = await _serviceNow.GetIncidentsAsync(limit, query, ct);
@@ -73,6 +76,29 @@ public class TicketService : ITicketService
         };
 
         await _repository.AddAsync(ticket, ct);
+    }
+
+    public async Task<Ticket> CreateFromAgentAsync(CreateAgentTicketRequest req, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var ticket = new Ticket
+        {
+            SysId = Guid.NewGuid().ToString("N"),
+            Number = await GenerateTicketNumberAsync(ct),
+            Title = $"{req.System}: {req.ErrorType}",
+            Description = req.Description,
+            State = 1,
+            StateLabel = "New",
+            Priority = 3,
+            PriorityLabel = "Moderate",
+            CreatedByEmail = req.UserEmail,
+            OpenedAt = now,
+            UpdatedAt = now,
+            LastSyncedAt = now
+        };
+
+        await _repository.AddAsync(ticket, ct);
+        return ticket;
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateTicketRequest req, CancellationToken ct = default)
@@ -137,5 +163,18 @@ public class TicketService : ITicketService
         ticket.UpdatedAt = incident.UpdatedAt ?? DateTime.UtcNow;
         ticket.ResolvedAt = incident.ResolvedAt;
         ticket.LastSyncedAt = DateTime.UtcNow;
+    }
+
+    private async Task<string> GenerateTicketNumberAsync(CancellationToken ct)
+    {
+        string number;
+
+        do
+        {
+            number = $"INC{Random.Shared.Next(1000, 10000)}";
+        }
+        while (await _repository.GetByNumberAsync(number, ct) is not null);
+
+        return number;
     }
 }

@@ -4,6 +4,7 @@ using AgentAI.Data;
 using AgentAI.Extensions;
 using AgentAI.Modules.Tickets;
 using AgentAI.Modules.Notifications;
+using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.Authentication;
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
@@ -35,6 +36,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
 builder.Services.AddNotificationModule();
+builder.Services.AddKnowledgeBaseModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
@@ -51,6 +53,7 @@ app.UseAuthorization();
 app.MapHealthModule();
 app.MapTicketModule();
 app.MapNotificationModule();
+app.MapKnowledgeBaseModule();
 app.MapAuthenticationModule();
 
 // Configure the HTTP request pipeline.

@@ -17,6 +17,11 @@ public static class TicketEndpoints
                 ? Results.Ok(ticket)
                 : Results.NotFound());
 
+        group.MapGet("/by-number/{number}", async (string number, ITicketService service, CancellationToken ct) =>
+            await service.GetByNumberAsync(number, ct) is { } ticket
+                ? Results.Ok(ticket)
+                : Results.NotFound());
+
         group.MapGet("/servicenow", async (int? limit, string? query, ITicketService service, CancellationToken ct) =>
             Results.Ok(await service.GetFromServiceNowAsync(limit ?? 20, query, ct)))
             .AllowAnonymous();
@@ -29,6 +34,12 @@ public static class TicketEndpoints
         {
             await service.CreateAsync(req, ct);
             return Results.Created();
+        });
+
+        group.MapPost("/from-agent", async (CreateAgentTicketRequest req, ITicketService service, CancellationToken ct) =>
+        {
+            var ticket = await service.CreateFromAgentAsync(req, ct);
+            return Results.Created($"/tickets/{ticket.Id}", ticket);
         });
 
         group.MapPut("/{id:int}", async (int id, UpdateTicketRequest req, ITicketService service, CancellationToken ct) =>

@@ -322,6 +322,8 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
         var fields = new Dictionary<string, string>
         {
+            ["state"] = "2",
+            ["incident_state"] = "2",
             ["assignment_group"] = assignmentGroupSysId,
             ["work_notes"] = workNote
         };

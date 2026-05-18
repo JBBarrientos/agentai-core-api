@@ -1,0 +1,36 @@
+Usando la configuración de inicio de C:\Users\jonat\Desktop\Proyecto final\PF\agentai-core-api\Properties\launchSettings.json...
+Compilando...
+info: AgentAI.Modules.ServiceNow.ServiceNowSyncWorker[0]
+      ServiceNow background sync is disabled.
+info: AgentAI.Modules.Notifications.NotificationTicketPollingWorker[0]
+      Notification ticket polling started. Interval: 30 seconds. Last processed: INC0010018 at 05/18/2026 19:48:46.
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5038
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\jonat\Desktop\Proyecto final\PF\agentai-core-api
+fail: Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware[1]
+      An unhandled exception has occurred while executing the request.
+      MySqlConnector.MySqlException (0x80004005): Access denied for user 'agentai_user'@'localhost' to database 'kb_support_ai'
+         at MySqlConnector.Core.ServerSession.ReceiveReplyAsync(IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ServerSession.cs:line 894
+         at MySqlConnector.Core.ServerSession.SwitchAuthenticationAsync(ConnectionSettings cs, String password, PayloadData payload, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ServerSession.cs:line 700
+         at MySqlConnector.Core.ServerSession.ConnectAsync(ConnectionSettings cs, MySqlConnection connection, Int64 startingTimestamp, ILoadBalancer loadBalancer, Activity activity, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ServerSession.cs:line 537
+         at MySqlConnector.Core.ConnectionPool.ConnectSessionAsync(MySqlConnection connection, Action`4 logMessage, Int64 startingTimestamp, Activity activity, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ConnectionPool.cs:line 428
+         at MySqlConnector.Core.ConnectionPool.ConnectSessionAsync(MySqlConnection connection, Action`4 logMessage, Int64 startingTimestamp, Activity activity, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ConnectionPool.cs:line 433
+         at MySqlConnector.Core.ConnectionPool.GetSessionAsync(MySqlConnection connection, Int64 startingTimestamp, Int32 timeoutMilliseconds, Activity activity, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ConnectionPool.cs:line 111
+         at MySqlConnector.Core.ConnectionPool.GetSessionAsync(MySqlConnection connection, Int64 startingTimestamp, Int32 timeoutMilliseconds, Activity activity, IOBehavior ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/Core/ConnectionPool.cs:line 144
+         at MySqlConnector.MySqlConnection.CreateSessionAsync(ConnectionPool pool, Int64 startingTimestamp, Activity activity, Nullable`1 ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/MySqlConnection.cs:line 919
+         at MySqlConnector.MySqlConnection.OpenAsync(Nullable`1 ioBehavior, CancellationToken cancellationToken) in /_/src/MySqlConnector/MySqlConnection.cs:line 419
+         at AgentAI.Modules.KnowledgeBase.KnowledgeBaseService.SearchAsync(String query, String system, Int32 limit, CancellationToken ct) in C:\Users\jonat\Desktop\Proyecto final\PF\agentai-core-api\Modules\KnowledgeBase\KnowledgeBaseService.cs:line 116
+         at AgentAI.Modules.KnowledgeBase.KnowledgeBaseService.SearchAsync(String query, String system, Int32 limit, CancellationToken ct) in C:\Users\jonat\Desktop\Proyecto final\PF\agentai-core-api\Modules\KnowledgeBase\KnowledgeBaseService.cs:line 152
+         at AgentAI.Modules.KnowledgeBase.KnowledgeBaseEndpoints.<>c.<<MapKnowledgeBaseEndpoints>b__0_0>d.MoveNext() in C:\Users\jonat\Desktop\Proyecto final\PF\agentai-core-api\Modules\KnowledgeBase\KnowledgeBaseEndpoints.cs:line 18
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Http.RequestDelegateFactory.ExecuteTaskResult[T](Task`1 task, HttpContext httpContext)
+         at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext)
+         at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
+         at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+         at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+         at Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddlewareImpl.<Invoke>g__Awaited|10_0(ExceptionHandlerMiddlewareImpl middleware, HttpContext context, Task task)
