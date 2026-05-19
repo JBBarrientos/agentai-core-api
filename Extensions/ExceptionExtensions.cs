@@ -24,6 +24,13 @@ public static class ExceptionExtensions
                     _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.")
                 };
 
+                if (status == StatusCodes.Status500InternalServerError &&
+                    app.ApplicationServices.GetRequiredService<IHostEnvironment>().IsDevelopment() &&
+                    ex is not null)
+                {
+                    message = ex.Message;
+                }
+
                 context.Response.StatusCode = status;
                 context.Response.ContentType = "application/json";
                 await context.Response.WriteAsJsonAsync(new { error = message });

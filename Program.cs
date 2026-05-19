@@ -14,6 +14,9 @@ using AgentAI.Modules.AuditLog;
 using AgentAI.Modules.AgentRuns;
 using AgentAI.Modules.AgentSteps;
 using AgentAI.Modules.KbUsages;
+using AgentAI.Modules.Notifications;
+using AgentAI.Modules.KnowledgeBase;
+using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,8 +33,7 @@ builder.Configuration
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
@@ -41,6 +43,8 @@ builder.Services.AddAgentRunModule();
 builder.Services.AddMessageModule();
 builder.Services.AddAgentStepModule();
 builder.Services.AddKbUsageModule();
+builder.Services.AddNotificationModule();
+builder.Services.AddKnowledgeBaseModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
@@ -67,6 +71,9 @@ app.UseCors("AllowAll");
 app.UseAuthentication(); 
 app.UseAuthorization();
 app.MapHealthModule();
+app.MapNotificationModule();
+app.MapKnowledgeBaseModule();
+app.MapAuthenticationModule();
 app.MapTicketModule();
 app.MapConversationModule();
 app.MapMessageModule();
@@ -107,8 +114,9 @@ app.MapGet("/weatherforecast", () =>
 .RequireAuthorization();
 
 
-using (var scope = app.Services.CreateScope())
+if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }

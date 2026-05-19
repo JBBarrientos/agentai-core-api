@@ -11,10 +11,13 @@ obj/
 *.user
 *.suo
 *.db
+.dotnet_home/
 
 # Secrets
 secrets.json
 *.secret.json
+.env
+App_Data/
 
 # Test results
 TestResults/
