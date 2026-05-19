@@ -97,4 +97,47 @@ public class TicketService : ITicketService
         )), ct);
     }
 
+    public async Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default)
+        => await _repository.GetByNumberAsync(number, ct);
+
+    public async Task<IEnumerable<Ticket>> GetFromServiceNowAsync(int limit, string? query, CancellationToken ct = default)
+    {
+        // TODO: call ServiceNow client and return results
+        throw new NotImplementedException();
+    }
+
+    public async Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit, string? query, CancellationToken ct = default)
+    {
+        // TODO: fetch from ServiceNow and upsert via _repository
+        throw new NotImplementedException();
+    }
+
+
+    public async Task<Ticket> CreateFromAgentAsync(CreateAgentTicketRequest req, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var ticket = new Ticket
+        {
+            SysId = Guid.NewGuid().ToString("N"),
+            Number = await GenerateTicketNumberAsync(ct),
+            Title = $"{req.System}: {req.ErrorType}",
+            Description = req.Description,
+            State = 1,
+            StateLabel = "New",
+            Priority = 3,
+            PriorityLabel = "Moderate",
+            CreatedByEmail = req.UserEmail,
+            OpenedAt = now,
+            UpdatedAt = now,
+            LastSyncedAt = now
+        };
+
+        await _repository.AddAsync(ticket, ct);
+        return ticket;
+    }
+    private async Task<string> GenerateTicketNumberAsync(CancellationToken ct = default)
+    {
+        var count = await _repository.CountAsync(ct);
+        return $"TKT{(count + 1):D6}";
+    }
 }
