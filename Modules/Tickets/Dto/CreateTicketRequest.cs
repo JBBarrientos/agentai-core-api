@@ -9,8 +9,5 @@ public record CreateTicketRequest(
     string StateLabel,
     int Priority,
     string PriorityLabel,
-    string AssignedTo,
-    string AssignmentGroup,
-    string CallerId,
     DateTime OpenedAt
 );

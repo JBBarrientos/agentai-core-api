@@ -2,10 +2,17 @@
 using AgentAI.Modules.Health;
 using AgentAI.Data;
 using AgentAI.Extensions;
+<<<<<<< HEAD
 using AgentAI.Modules.Tickets;
 using AgentAI.Modules.Notifications;
 using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.Authentication;
+=======
+using AgentAI.Modules.Tickets;
+using AgentAI.Modules.Messages;
+using AgentAI.Modules.Conversations;
+using AgentAI.Modules.Authentication;
+>>>>>>> origin/main
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
 using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
@@ -27,6 +34,7 @@ builder.Services.AddSwaggerGen();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
+<<<<<<< HEAD
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(
         connectionString,
@@ -38,6 +46,13 @@ builder.Services.AddTicketModule();
 builder.Services.AddNotificationModule();
 builder.Services.AddKnowledgeBaseModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
+=======
+builder.Services.AddHealthModule();
+builder.Services.AddTicketModule();
+builder.Services.AddConversationModule();
+builder.Services.AddMessageModule();
+builder.Services.AddAuthenticationModule(builder.Configuration);
+>>>>>>> origin/main
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
 builder.Services.Configure<CognitoOptions>(
@@ -45,16 +60,32 @@ builder.Services.Configure<CognitoOptions>(
 
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
-
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
+app.UseCors("AllowAll");
 app.UseAuthentication(); 
 app.UseAuthorization();
 app.MapHealthModule();
+<<<<<<< HEAD
 app.MapTicketModule();
 app.MapNotificationModule();
 app.MapKnowledgeBaseModule();
 app.MapAuthenticationModule();
+=======
+app.MapTicketModule();
+app.MapConversationModule();
+app.MapMessageModule();
+app.MapAuthenticationModule();
+>>>>>>> origin/main
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
