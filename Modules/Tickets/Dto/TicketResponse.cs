@@ -1,6 +1,6 @@
 ﻿namespace AgentAI.Modules.Tickets.Dto;
-
-public record CreateTicketRequest(
+public record TicketResponse(
+    int Id,
     string SysId,
     string Number,
     string Title,
@@ -9,5 +9,8 @@ public record CreateTicketRequest(
     string StateLabel,
     int Priority,
     string PriorityLabel,
-    DateTime OpenedAt
+    DateTime OpenedAt,
+    DateTime UpdatedAt,
+    DateTime? ResolvedAt,
+    DateTime LastSyncedAt
 );

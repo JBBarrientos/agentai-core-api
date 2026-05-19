@@ -3,11 +3,19 @@ using AgentAI.Modules.Health;
 using AgentAI.Data;
 using AgentAI.Extensions;
 using AgentAI.Modules.Tickets;
-using AgentAI.Modules.Notifications;
-using AgentAI.Modules.KnowledgeBase;
+using AgentAI.Modules.Messages;
+using AgentAI.Modules.Conversations;
 using AgentAI.Modules.Authentication;
 using AgentAI.Modules.Authentication.Cognito;
 using Amazon.CognitoIdentityProvider;
+using AgentAI.Modules.Queue;
+using Microsoft.AspNetCore.Mvc;
+using AgentAI.Modules.AuditLog;
+using AgentAI.Modules.AgentRuns;
+using AgentAI.Modules.AgentSteps;
+using AgentAI.Modules.KbUsages;
+using AgentAI.Modules.Notifications;
+using AgentAI.Modules.KnowledgeBase;
 using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -27,14 +35,14 @@ builder.Services.AddSwaggerGen();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(
-        connectionString,
-        new MySqlServerVersion(new Version(8, 0, 0))));
-
-
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
+builder.Services.AddConversationModule();
+builder.Services.AddAuditLogModule();
+builder.Services.AddAgentRunModule();
+builder.Services.AddMessageModule();
+builder.Services.AddAgentStepModule();
+builder.Services.AddKbUsageModule();
 builder.Services.AddNotificationModule();
 builder.Services.AddKnowledgeBaseModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
@@ -45,16 +53,35 @@ builder.Services.Configure<CognitoOptions>(
 
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
+builder.Services.AddQueueModule(builder.Configuration, builder.Environment);
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
+app.UseCors("AllowAll");
 app.UseAuthentication(); 
 app.UseAuthorization();
 app.MapHealthModule();
-app.MapTicketModule();
 app.MapNotificationModule();
 app.MapKnowledgeBaseModule();
 app.MapAuthenticationModule();
+app.MapTicketModule();
+app.MapConversationModule();
+app.MapMessageModule();
+app.MapAuthenticationModule();
+app.MapAuditLogModule();
+app.MapAgentRunModule();
+app.MapAgentStepModule();
+app.MapKbUsageModule();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

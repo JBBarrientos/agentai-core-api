@@ -1,4 +1,8 @@
-﻿public class Ticket
+﻿using AgentAI.Modules.Conversations;
+
+namespace AgentAI.Modules.Tickets;
+
+public class Ticket
 {
     public int Id { get; set; }
 
@@ -68,4 +72,7 @@
 
     /// <summary>When this record was last synced from ServiceNow.</summary>
     public DateTime LastSyncedAt { get; set; }
+
+    // --- Conversations ---
+    public ICollection<Conversation> Conversations { get; set; } = new List<Conversation>();
 }
