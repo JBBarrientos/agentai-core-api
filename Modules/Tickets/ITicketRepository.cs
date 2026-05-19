@@ -9,4 +9,5 @@ public interface ITicketRepository
     Task AddAsync(Ticket ticket, CancellationToken ct = default);
     Task UpdateAsync(Ticket ticket, CancellationToken ct = default);
     Task<bool> DeleteAsync(int id, CancellationToken ct = default);
+    Task<int> CountAsync(CancellationToken ct = default);
 }

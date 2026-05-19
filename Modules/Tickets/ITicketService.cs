@@ -11,4 +11,8 @@ public interface ITicketService
     Task<bool> UpdateAsync(int id, UpdateTicketRequest request, CancellationToken ct = default);
     Task<bool> DeleteAsync(int id, CancellationToken ct = default);
     Task ProcessAsync(int ticketId, CancellationToken ct = default);
+    Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default);
+    Task<IEnumerable<ServiceNowTicketResponse>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default);
+    Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default);
+    Task<Ticket> CreateFromAgentAsync(CreateAgentTicketRequest request, CancellationToken ct = default);
 }

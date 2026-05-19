@@ -41,4 +41,6 @@ public class TicketRepository : ITicketRepository
         await _db.SaveChangesAsync(ct);
         return true;
     }
+    public async Task<int> CountAsync(CancellationToken ct = default)
+    => await _db.Tickets.CountAsync(cancellationToken: ct);
 }
