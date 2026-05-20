@@ -77,7 +77,6 @@ app.MapAuthenticationModule();
 app.MapTicketModule();
 app.MapConversationModule();
 app.MapMessageModule();
-app.MapAuthenticationModule();
 app.MapAuditLogModule();
 app.MapAgentRunModule();
 app.MapAgentStepModule();
