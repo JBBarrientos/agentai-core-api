@@ -118,6 +118,7 @@ public class IncomingMessageService : IIncomingMessageService
         var conversation = new Conversation
         {
             TicketId = req.TicketId,
+            SysId = req.SysId,
             Channel = "telegram",
             Status = "active",
             StartedAt = DateTime.UtcNow,
