@@ -18,6 +18,8 @@ public class ConversationService : IConversationService
 
     public async Task<IEnumerable<Conversation>> GetByTicketIdAsync(int ticketId, CancellationToken ct = default)
         => await _repository.GetByTicketIdAsync(ticketId, ct);
+    public async Task<Conversation?> GetBySysIdAsync(string sysId, CancellationToken ct = default)
+        => await _repository.GetBySysIdAsync(sysId, ct);
 
     public async Task<Conversation?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);

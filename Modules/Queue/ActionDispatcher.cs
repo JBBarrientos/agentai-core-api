@@ -34,7 +34,6 @@ public class ActionDispatcher
         };
     }
 
-    private record OutboundMessagePayload(int ConversationId, string Body, string MessageType);
 
     private async Task HandleSendMessageAsync(OutboundMessage message)
     {
@@ -51,16 +50,8 @@ public class ActionDispatcher
             return;
         }
 
-        await _incomingMessageService.ProcessOutboundAsync(new IncomingMessageRequest(
-            ConversationId: payload.ConversationId,
-            TicketId: null,
-            SysId: Guid.NewGuid().ToString(),
-            SenderType: "bot",
-            SenderName: "Agent",
-            Body: payload.Body,
-            MessageType: payload.MessageType,
-            SentAt: DateTime.UtcNow
-        ));
+
+        await _incomingMessageService.ProcessOutboundAsync(payload);
 
         _logger.LogInformation("[SEND_MESSAGE] Persisted bot response for ticket {TicketId}", message.TicketId);
     }

@@ -3,6 +3,9 @@ using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.ServiceNow;
+using AgentAI.Modules.Messages;
+using AgentAI.Modules.Tickets;
+using AgentAI.Modules.Messages.Dto;
 
 namespace AgentAI.Modules.Notifications;
 
@@ -15,6 +18,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     private readonly IKnowledgeBaseService _knowledgeBase;
     private readonly IConfiguration _configuration;
     private readonly ITelegramMessageSender _messageSender;
+    private readonly IIncomingMessageService _incomingMessageService;
+    private readonly ITicketService _ticketService;
     private readonly ILogger<TelegramWebhookService> _logger;
 
     public TelegramWebhookService(
@@ -22,12 +27,16 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         IKnowledgeBaseService knowledgeBase,
         IConfiguration configuration,
         ITelegramMessageSender messageSender,
+        IIncomingMessageService incomingMessageService,
+        ITicketService ticketService,
         ILogger<TelegramWebhookService> logger)
     {
         _serviceNow = serviceNow;
         _knowledgeBase = knowledgeBase;
         _configuration = configuration;
         _messageSender = messageSender;
+        _incomingMessageService = incomingMessageService;
+        _ticketService = ticketService;
         _logger = logger;
     }
 
@@ -191,7 +200,25 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             return BuildMissingFieldQuestion(incident.Number, missingField.Value);
         }
 
-        return await AnalyzeAndRouteAsync(incident, ct);
+        var ticket = await _ticketService.GetBySysIdAsync(incident.SysId, ct);
+        if (ticket is null)
+        {
+            // TODO: fallback to ServiceNow lookup by SysId, if found create the ticket locally then continue
+            return $"No encontre el ticket {incident.Number} en el sistema. Intenta nuevamente mas tarde.";
+        }
+
+        await _incomingMessageService.ProcessIncomingAsync(new IncomingMessageRequest(
+            TicketId: ticket.Id,
+            SysId: incident.SysId, // TODO: replace with Telegram MessageId once available on TelegramUpdate
+            ConversationSysId: chatId,
+            SenderType: "customer",
+            SenderName: chatId, // TODO: replace with Telegram user's real name once available
+            Body: $"{incident.Title} {incident.Description}".Trim(),
+            MessageType: "user_message",
+            SentAt: DateTime.UtcNow
+        ), ct);
+
+        return $"Estamos procesando tu caso {incident.Number}, aguarda un momento.";
     }
 
     private async Task<string> AnalyzeAndRouteAsync(ServiceNowIncident incident, CancellationToken ct)

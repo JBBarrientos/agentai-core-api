@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using AgentAI.Modules.Conversations;
 using AgentAI.Modules.Messages.Dto;
+using AgentAI.Modules.Notifications;
 using AgentAI.Modules.Queue;
 
 namespace AgentAI.Modules.Messages;
@@ -10,17 +11,20 @@ public class IncomingMessageService : IIncomingMessageService
     private readonly IConversationRepository _conversationRepository;
     private readonly IMessageRepository _messageRepository;
     private readonly IQueueService _queueService;
+    private readonly ITelegramMessageSender _messageSender;
     private readonly ILogger<IncomingMessageService> _logger;
 
     public IncomingMessageService(
         IConversationRepository conversationRepository,
         IMessageRepository messageRepository,
         [FromKeyedServices("inbound")] IQueueService queueService,
+        ITelegramMessageSender messageSender,
         ILogger<IncomingMessageService> logger)
     {
         _conversationRepository = conversationRepository;
         _messageRepository = messageRepository;
         _queueService = queueService;
+        _messageSender = messageSender;
         _logger = logger;
     }
 
@@ -53,14 +57,28 @@ public class IncomingMessageService : IIncomingMessageService
         return BuildResponse(message, conversation, conversationCreated);
     }
 
-    public async Task<IncomingMessageResponse> ProcessOutboundAsync(
-        IncomingMessageRequest req,
-        CancellationToken ct = default)
+    public async Task ProcessOutboundAsync(OutboundMessagePayload payload, CancellationToken ct = default)
     {
-        var (message, conversation, conversationCreated) = await PersistCoreAsync(req, ct);
-        return BuildResponse(message, conversation, conversationCreated);
-    }
+        var conversation = await _conversationRepository.GetByIdAsync(payload.ConversationId, ct);
+        if (conversation is null)
+        {
+            _logger.LogWarning("ProcessOutboundAsync: conversation {ConversationId} not found.", payload.ConversationId);
+            return;
+        }
 
+        await PersistCoreAsync(new IncomingMessageRequest(
+            TicketId: conversation.TicketId,
+            SysId: Guid.NewGuid().ToString(), // TODO: replace with real message SysId if available
+            ConversationSysId: conversation.SysId,
+            SenderType: "bot",
+            SenderName: "Agent",
+            Body: payload.Body,
+            MessageType: payload.MessageType,
+            SentAt: DateTime.UtcNow
+        ), ct);
+
+        await _messageSender.SendToChatAsync(conversation.SysId, payload.Body, ct: ct);
+    }
     private async Task<(Message message, Conversation conversation, bool conversationCreated)> PersistCoreAsync(
         IncomingMessageRequest req,
         CancellationToken ct)
@@ -92,18 +110,14 @@ public class IncomingMessageService : IIncomingMessageService
         IncomingMessageRequest req,
         CancellationToken ct)
     {
-        var existing = await _conversationRepository.GetByIdAsync(req.ConversationId, ct);
+        var existing = await _conversationRepository.GetBySysIdAsync(req.ConversationSysId, ct);
         if (existing is not null)
             return (existing, false);
 
-        if (req.TicketId is null)
-            throw new InvalidOperationException(
-                $"No conversation found for Id '{req.ConversationId}' " +
-                "and no TicketId was provided to create one.");
 
         var conversation = new Conversation
         {
-            TicketId = req.TicketId.Value,
+            TicketId = req.TicketId,
             Channel = "telegram",
             Status = "active",
             StartedAt = DateTime.UtcNow,
