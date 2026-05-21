@@ -28,7 +28,8 @@ public class TicketService : ITicketService
 
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
-
+    public async Task<Ticket?> GetBySysIdAsync(string sysId, CancellationToken ct = default)
+        => await _repository.GetBySysIdAsync(sysId, ct);
     public async Task<TicketResponse> CreateAsync(CreateTicketRequest req, CancellationToken ct = default)
     {
         var ticket = new Ticket
