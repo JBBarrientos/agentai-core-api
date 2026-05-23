@@ -33,6 +33,7 @@ public class AgentStepService : IAgentStepService
             AgentType = req.AgentType,
             InputData = req.InputData,
             OutputData = string.Empty,
+            Prompt = req.Prompt,
             Status = "pending",
             CreatedAt = DateTime.UtcNow
         };
@@ -44,6 +45,7 @@ public class AgentStepService : IAgentStepService
             AgentType: step.AgentType,
             InputData: step.InputData,
             OutputData: step.OutputData,
+            Prompt: step.Prompt,
             Status: step.Status,
             CreatedAt: step.CreatedAt
         );
@@ -67,6 +69,7 @@ public class AgentStepService : IAgentStepService
         step.AgentType,
         step.InputData,
         step.OutputData,
+        step.Prompt,
         step.Status,
         step.CreatedAt
     );

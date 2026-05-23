@@ -6,5 +6,6 @@ public record AgentStepResponse(
     string InputData,
     string OutputData,
     string Status,
+    string Prompt,
     DateTime CreatedAt
 );
