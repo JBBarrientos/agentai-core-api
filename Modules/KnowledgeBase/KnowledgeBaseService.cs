@@ -1,18 +1,13 @@
-using System.Data;
-using System.Text;
-using AgentAI.Data;
-using Microsoft.EntityFrameworkCore;
+using MySqlConnector;
 
 namespace AgentAI.Modules.KnowledgeBase;
 
 public sealed class KnowledgeBaseService : IKnowledgeBaseService
 {
-    private readonly AppDbContext _db;
     private readonly IConfiguration _configuration;
 
-    public KnowledgeBaseService(AppDbContext db, IConfiguration configuration)
+    public KnowledgeBaseService(IConfiguration configuration)
     {
-        _db = db;
         _configuration = configuration;
     }
 
@@ -111,24 +106,27 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
         var normalizedQuery = Normalize(query);
         var normalizedSystem = Normalize(system);
 
-        await using var connection = _db.Database.GetDbConnection();
-        if (connection.State != ConnectionState.Open)
-            await connection.OpenAsync(ct);
+        await using var connection = new MySqlConnection(GetConnectionString());
+        await connection.OpenAsync(ct);
+
+        await using var setMode = connection.CreateCommand();
+        setMode.CommandText = "SET SESSION sql_mode = ''";
+        await setMode.ExecuteNonQueryAsync(ct);
 
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        AddParameter(command, "queryFilter", normalizedQuery);
-        AddParameter(command, "systemFilter", normalizedSystem);
-        AddParameter(command, "queryLike", $"%{normalizedQuery}%");
-        AddParameter(command, "systemLike", $"%{normalizedSystem}%");
-        AddParameter(command, "limit", limit);
+        command.Parameters.AddWithValue("@queryFilter", normalizedQuery);
+        command.Parameters.AddWithValue("@systemFilter", normalizedSystem);
+        command.Parameters.AddWithValue("@queryLike", $"%{normalizedQuery}%");
+        command.Parameters.AddWithValue("@systemLike", $"%{normalizedSystem}%");
+        command.Parameters.AddWithValue("@limit", limit);
 
         var results = new List<KnowledgeBaseSearchResult>();
         await using var reader = await command.ExecuteReaderAsync(ct);
 
         while (await reader.ReadAsync(ct))
         {
-            var score = reader.GetDecimal("score");
+            var score = Convert.ToDecimal(reader["score"]);
             results.Add(new KnowledgeBaseSearchResult(
                 reader.GetInt32("article_id"),
                 reader.GetString("article_code"),
@@ -202,6 +200,10 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
         return "continuar";
     }
 
+    private string GetConnectionString()
+        => _configuration["KnowledgeBase:ConnectionString"]
+            ?? throw new InvalidOperationException("KnowledgeBase:ConnectionString no está configurado.");
+
     private string GetSchemaPrefix()
     {
         var database = _configuration["KnowledgeBase:DatabaseName"] ?? "kb_support_ai";
@@ -210,13 +212,4 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
 
     private static string Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
-
-    private static void AddParameter(IDbCommand command, string name, object value)
-    {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = $"@{name}";
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
-    }
 }
-
