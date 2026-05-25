@@ -63,7 +63,9 @@ public sealed class ServiceNowRetryHandler : DelegatingHandler
     }
 
     private int GetIntSetting(string key, int defaultValue)
-        => int.TryParse(_configuration[$"ServiceNow:{key}"], out var value) ? value : defaultValue;
+        => int.TryParse(_configuration[$"ServiceNow:{key}"], out var value)
+            ? value
+            : defaultValue;
 
     private static bool ShouldRetry(HttpStatusCode statusCode)
         => TransientStatusCodes.Contains(statusCode);

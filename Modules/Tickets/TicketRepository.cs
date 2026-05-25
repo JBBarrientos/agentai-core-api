@@ -14,6 +14,9 @@ public class TicketRepository : ITicketRepository
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _db.Tickets.FirstOrDefaultAsync(t => t.Id == id, ct);
 
+    public async Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default)
+        => await _db.Tickets.FirstOrDefaultAsync(t => t.Number == number, ct);
+
     public async Task<Ticket?> GetBySysIdAsync(string sysId, CancellationToken ct = default)
         => await _db.Tickets.FirstOrDefaultAsync(t => t.SysId == sysId, ct);
 
@@ -38,4 +41,6 @@ public class TicketRepository : ITicketRepository
         await _db.SaveChangesAsync(ct);
         return true;
     }
+    public async Task<int> CountAsync(CancellationToken ct = default)
+    => await _db.Tickets.CountAsync(cancellationToken: ct);
 }

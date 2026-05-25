@@ -46,6 +46,18 @@ public static class NotificationEndpoints
             return Results.Ok(result);
         });
 
+        app.MapPost("/telegram/webhook", async (
+            TelegramUpdate update,
+            ITelegramWebhookService service,
+            CancellationToken ct) =>
+        {
+            await service.HandleAsync(update, ct);
+            return Results.Ok();
+        })
+        .WithTags("Telegram")
+        .AllowAnonymous();
+
+
         return app;
     }
 }

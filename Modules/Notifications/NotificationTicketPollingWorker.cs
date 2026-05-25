@@ -66,7 +66,6 @@ public sealed class NotificationTicketPollingWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var serviceNow = scope.ServiceProvider.GetRequiredService<IServiceNowConnector>();
-        var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
         var stateStore = scope.ServiceProvider.GetRequiredService<INotificationPollingStateStore>();
 
         var limit = Math.Max(_configuration.GetValue("Notifications:PollingLimit", 20), 1);
@@ -77,7 +76,7 @@ public sealed class NotificationTicketPollingWorker : BackgroundService
         var hasPersistedState = _state.LastProcessedOpenedAtUtc is not null || _state.ProcessedTicketSysIds.Count > 0;
         var tickets = await serviceNow.GetIncidentsPagedAsync(limit, maxPages, query, ct);
         var knownOnStartupCount = 0;
-        var notifiedCount = 0;
+        var updatedCount = 0;
 
         foreach (var ticket in tickets.OrderBy(t => t.OpenedAt ?? DateTime.MaxValue))
         {
@@ -94,28 +93,32 @@ public sealed class NotificationTicketPollingWorker : BackgroundService
                 continue;
             }
 
-            var result = await notifications.NotifyReviewStartedAsync(ticket.SysId, ct);
+            var body = $"Hola {GetDisplayName(ticket)}, estamos revisando tu caso {ticket.Number}: \"{ticket.Title}\".";
+            var workNote = $"AgentAI comenzo a revisar el caso {ticket.Number}.";
+
+            await serviceNow.MarkInProgressAsync(ticket.SysId, workNote, body, ct);
             _state.MarkProcessed(ticket.SysId, ticket.Number, ticket.OpenedAt);
-            notifiedCount++;
+            updatedCount++;
             _logger.LogInformation(
-                "Review-started notification for ticket {TicketNumber}. Sent={Sent}. Provider={Provider}. Message={Message}",
-                ticket.Number,
-                result.Sent,
-                result.Provider,
-                result.Message);
+                "Marked ServiceNow ticket {TicketNumber} as in progress. Telegram notification was not sent; Telegram replies only when a user asks for a ticket.",
+                ticket.Number);
         }
 
         if (knownOnStartupCount > 0)
             _logger.LogInformation("Notification polling marked {Count} existing tickets as already known on startup.", knownOnStartupCount);
 
-        if (tickets.Count > 0 || notifiedCount > 0)
-            _logger.LogInformation("Notification polling checked {CheckedCount} tickets and sent {NotifiedCount} notifications.", tickets.Count, notifiedCount);
+        if (tickets.Count > 0 || updatedCount > 0)
+            _logger.LogInformation("Notification polling checked {CheckedCount} tickets and updated {UpdatedCount} tickets.", tickets.Count, updatedCount);
 
         if (tickets.Count > 0)
             await stateStore.SaveAsync(_state, ct);
 
         _isStartup = false;
     }
+
+    private static string GetDisplayName(ServiceNowIncident ticket)
+        => string.IsNullOrWhiteSpace(ticket.CreatedByName) ? "buenas" : ticket.CreatedByName;
+
 
     private string BuildPollingQuery()
     {

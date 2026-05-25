@@ -1,10 +1,19 @@
-﻿namespace AgentAI.Modules.Queue;
+﻿using System.Text.Json;
+using AgentAI.Modules.Messages;
+using AgentAI.Modules.Messages.Dto;
+
+namespace AgentAI.Modules.Queue;
+
 public class ActionDispatcher
 {
+    private readonly IIncomingMessageService _incomingMessageService;
     private readonly ILogger<ActionDispatcher> _logger;
 
-    public ActionDispatcher(ILogger<ActionDispatcher> logger)
+    public ActionDispatcher(
+        IIncomingMessageService incomingMessageService,
+        ILogger<ActionDispatcher> logger)
     {
+        _incomingMessageService = incomingMessageService;
         _logger = logger;
     }
 
@@ -17,6 +26,7 @@ public class ActionDispatcher
 
         return message.Action switch
         {
+            "send_message" => HandleSendMessageAsync(message),
             "send_whatsapp" => HandleWhatsAppAsync(message),
             "send_email" => HandleEmailAsync(message),
             "escalate" => HandleEscalationAsync(message),
@@ -24,6 +34,27 @@ public class ActionDispatcher
         };
     }
 
+
+    private async Task HandleSendMessageAsync(OutboundMessage message)
+    {
+        if (string.IsNullOrEmpty(message.Payload))
+        {
+            _logger.LogWarning("[SEND_MESSAGE] No payload for ticket {TicketId}", message.TicketId);
+            return;
+        }
+
+        var payload = JsonSerializer.Deserialize<OutboundMessagePayload>(message.Payload);
+        if (payload is null)
+        {
+            _logger.LogWarning("[SEND_MESSAGE] Could not deserialize payload for ticket {TicketId}", message.TicketId);
+            return;
+        }
+
+
+        await _incomingMessageService.ProcessOutboundAsync(payload);
+
+        _logger.LogInformation("[SEND_MESSAGE] Persisted bot response for ticket {TicketId}", message.TicketId);
+    }
     private Task HandleWhatsAppAsync(OutboundMessage message)
     {
         _logger.LogInformation("[WHATSAPP] Would send message for ticket {TicketId}", message.TicketId);

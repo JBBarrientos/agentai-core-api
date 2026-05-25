@@ -11,6 +11,7 @@ public interface IServiceNowConnector
     Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsAsync(int limit = 20, string? query = null, CancellationToken ct = default);
     Task<IReadOnlyList<ServiceNowIncident>> GetIncidentsPagedAsync(int pageSize = 100, int maxPages = 5, string? query = null, CancellationToken ct = default);
     Task<ServiceNowIncident?> GetIncidentAsync(string sysId, CancellationToken ct = default);
+    Task<ServiceNowIncident?> GetIncidentByNumberAsync(string number, CancellationToken ct = default);
     Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default);
     Task AddWorkNoteAsync(string sysId, string note, CancellationToken ct = default);
     Task MarkInProgressAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default);
@@ -203,20 +204,74 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
         var item = result[0];
         var number = item.GetProperty("number").GetString() ?? string.Empty;
-        var shortDesc = item.TryGetProperty("short_description", out var sdProp) ? sdProp.GetString() ?? string.Empty : string.Empty;
+        var shortDesc = item.TryGetProperty("short_description", out var sd) ? sd.GetString() ?? string.Empty : string.Empty;
         var desc = GetDescription(item);
         if (string.IsNullOrWhiteSpace(desc))
             desc = await GetLatestCustomerCommentAsync(sysId, ct);
-        var serviceNowState = item.TryGetProperty("incident_state", out var sProp) && int.TryParse(sProp.GetString(), out var si) ? si : 0;
+        var serviceNowState = item.TryGetProperty("incident_state", out var s) && int.TryParse(s.GetString(), out var si) ? si : 0;
         var state = MapIncidentState(serviceNowState);
-        var urgency = item.TryGetProperty("urgency", out var uProp) && int.TryParse(uProp.GetString(), out var ui) ? ui : 0;
+        var urgency = item.TryGetProperty("urgency", out var u) && int.TryParse(u.GetString(), out var ui) ? ui : 0;
         var createdBy = await GetTicketCreatorAsync(item, ct);
-        var openedAt = item.TryGetProperty("opened_at", out var oaProp) && DateTime.TryParse(oaProp.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
-        var updatedAt = item.TryGetProperty("sys_updated_on", out var uaProp) && DateTime.TryParse(uaProp.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
+        var openedAt = item.TryGetProperty("opened_at", out var oa) && DateTime.TryParse(oa.GetString(), out var oaDt) ? DateTime.SpecifyKind(oaDt, DateTimeKind.Utc) : (DateTime?)null;
+        var updatedAt = item.TryGetProperty("sys_updated_on", out var ua) && DateTime.TryParse(ua.GetString(), out var uaDt) ? DateTime.SpecifyKind(uaDt, DateTimeKind.Utc) : (DateTime?)null;
         var resolvedAt = GetResolvedAt(item);
 
         return new ServiceNowIncident(sysId, number, shortDesc, desc, state, MapStateLabel(state), urgency, MapUrgencyLabel(urgency), createdBy.Name, createdBy.Email, openedAt, updatedAt, resolvedAt);
     }
+
+    public async Task<ServiceNowIncident?> GetIncidentByNumberAsync(string number, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(number)) throw new ArgumentException("number is required", nameof(number));
+
+        var candidates = BuildIncidentNumberCandidates(number);
+        var query = string.Join("^OR", candidates.Select(candidate => $"number={candidate}"));
+        var incidents = await GetIncidentsAsync(candidates.Count, query, ct);
+        return incidents.FirstOrDefault();
+    }
+
+    private static IReadOnlyList<string> BuildIncidentNumberCandidates(string number)
+    {
+        var normalized = string.Concat(number.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit));
+        var candidates = new List<string>();
+
+        void Add(string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && !candidates.Contains(value, StringComparer.OrdinalIgnoreCase))
+                candidates.Add(value);
+        }
+
+        Add(normalized);
+
+        var prefixedMatch = System.Text.RegularExpressions.Regex.Match(normalized, @"^([A-Z]{2,5})(\d{1,12})$");
+        if (prefixedMatch.Success)
+        {
+            var prefix = prefixedMatch.Groups[1].Value;
+            var digits = prefixedMatch.Groups[2].Value;
+            var unpaddedDigits = digits.TrimStart('0');
+
+            if (digits.Length <= 7)
+                Add($"{prefix}{digits.PadLeft(7, '0')}");
+
+            if (!string.IsNullOrWhiteSpace(unpaddedDigits))
+                Add($"{prefix}{unpaddedDigits}");
+        }
+        else if (normalized.All(char.IsDigit))
+        {
+            var digits = normalized;
+            var unpaddedDigits = digits.TrimStart('0');
+
+            Add($"INC{digits}");
+
+            if (digits.Length <= 7)
+                Add($"INC{digits.PadLeft(7, '0')}");
+
+            if (!string.IsNullOrWhiteSpace(unpaddedDigits))
+                Add($"INC{unpaddedDigits}");
+        }
+
+        return candidates;
+    }
+
 
     public async Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default)
     {
@@ -268,6 +323,8 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
         var fields = new Dictionary<string, string>
         {
+            ["state"] = "2",
+            ["incident_state"] = "2",
             ["assignment_group"] = assignmentGroupSysId,
             ["work_notes"] = workNote
         };
@@ -309,6 +366,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
                 builder.Append('_');
             builder.Append(char.ToUpperInvariant(current));
         }
+
         return builder.ToString();
     }
 
@@ -426,12 +484,14 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
     private static int MapIncidentState(int serviceNowState) => serviceNowState switch
     {
-        1 => 1,
-        2 => 2,
-        3 => 3,
-        6 => 4,
-        7 => 5,
-        8 => 6,
+        1 => 1, // New
+        2 => 2, // In Progress
+        3 => 3, // On Hold
+        4 => 4, // Resolved in UI position-based values
+        5 => 5, // Closed in UI position-based values
+        6 => 4, // ServiceNow incident_state: Resolved
+        7 => 5, // ServiceNow incident_state: Closed
+        8 => 6, // ServiceNow incident_state: Canceled
         _ => 0
     };
 
