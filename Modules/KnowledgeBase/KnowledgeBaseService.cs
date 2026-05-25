@@ -152,6 +152,56 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
         return results;
     }
 
+    public async Task<DiagnosticarResponse> DiagnosticarAsync(
+        string sistema,
+        string descripcion,
+        CancellationToken ct = default)
+    {
+        var results = await SearchAsync(descripcion, sistema, limit: 3, ct);
+
+        if (results.Count == 0)
+            return new DiagnosticarResponse(
+                PuedoResolver: false,
+                Decision: "escalar",
+                MensajeSugerido: "No encontré información en la base de conocimiento para resolver este caso. Lo escalo a soporte de nivel 2.",
+                CriteriosEscalacion: string.Empty,
+                AccionesRecomendadas: string.Empty,
+                Confianza: "ninguna",
+                ArticleId: null,
+                ArticleCode: null);
+
+        var top = results[0];
+        var decision = ResolveDecision(top);
+
+        return new DiagnosticarResponse(
+            PuedoResolver: decision == "continuar",
+            Decision: decision,
+            MensajeSugerido: top.SuggestedUserMessage,
+            CriteriosEscalacion: top.EscalationCriteria,
+            AccionesRecomendadas: top.RecommendedAction,
+            Confianza: top.Confidence,
+            ArticleId: top.ArticleId,
+            ArticleCode: top.ArticleCode);
+    }
+
+    private static string ResolveDecision(KnowledgeBaseSearchResult article)
+    {
+        var escalationKeywords = new[] { "escalar", "nivel 2", "especialista", "soporte avanzado" };
+        var hasEscalationCriteria = escalationKeywords.Any(k =>
+            article.EscalationCriteria.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+        if (hasEscalationCriteria && article.Confidence != "alta")
+            return "escalar";
+
+        if (article.Confidence == "baja")
+            return "escalar";
+
+        if (article.Confidence == "media" && !string.IsNullOrWhiteSpace(article.RequiredData))
+            return "pedir_mas_info";
+
+        return "continuar";
+    }
+
     private string GetSchemaPrefix()
     {
         var database = _configuration["KnowledgeBase:DatabaseName"] ?? "kb_support_ai";
