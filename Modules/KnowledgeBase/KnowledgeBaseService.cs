@@ -144,7 +144,7 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
                 reader.GetString("expected_result"),
                 reader.GetString("escalation_criteria"),
                 reader.GetString("suggested_user_message"),
-                score >= 8 ? "alta" : score >= 4 ? "media" : "baja"));
+                score >= 3 ? "alta" : score >= 2 ? "media" : "baja"));
         }
 
         return results;
@@ -155,7 +155,8 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
         string descripcion,
         CancellationToken ct = default)
     {
-        var results = await SearchAsync(descripcion, sistema, limit: 3, ct);
+        var keyword = ExtractKeyword(descripcion);
+        var results = await SearchAsync(keyword, system: null, limit: 3, ct);
 
         if (results.Count == 0)
             return new DiagnosticarResponse(
@@ -198,6 +199,24 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
             return "pedir_mas_info";
 
         return "continuar";
+    }
+
+    private static string ExtractKeyword(string description)
+    {
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "no", "me", "la", "el", "en", "de", "mi", "se", "lo", "que", "un", "una",
+            "es", "al", "del", "con", "por", "para", "como", "pero", "si", "ya", "su",
+            "le", "yo", "tu", "y", "a", "o", "fue", "han", "hay", "hace", "cada",
+            "esto", "esta", "este", "puedo", "pero", "figura", "tengo"
+        };
+
+        var keyword = description
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.Trim('.', ',', ';', ':', '!', '?'))
+            .FirstOrDefault(w => w.Length > 5 && !stopWords.Contains(w));
+
+        return keyword ?? description[..Math.Min(30, description.Length)];
     }
 
     private string GetConnectionString()
