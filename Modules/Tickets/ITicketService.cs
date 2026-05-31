@@ -1,7 +1,7 @@
-﻿using AgentAI.Modules.Tickets.Dto;
+using AgentAI.Modules.ServiceNow;
+using AgentAI.Modules.Tickets.Dto;
 
 namespace AgentAI.Modules.Tickets;
-
 
 public interface ITicketService
 {
@@ -15,5 +15,6 @@ public interface ITicketService
     Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default);
     Task<IEnumerable<ServiceNowTicketResponse>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default);
     Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default);
+    Task<Ticket> SyncIncidentAsync(ServiceNowIncident incident, CancellationToken ct = default);
     Task<Ticket> CreateFromAgentAsync(CreateAgentTicketRequest request, CancellationToken ct = default);
 }

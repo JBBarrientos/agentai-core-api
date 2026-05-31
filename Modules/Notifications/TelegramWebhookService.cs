@@ -6,6 +6,7 @@ using AgentAI.Modules.ServiceNow;
 using AgentAI.Modules.Messages;
 using AgentAI.Modules.Tickets;
 using AgentAI.Modules.Messages.Dto;
+using AgentAI.Modules.AgentActions;
 
 namespace AgentAI.Modules.Notifications;
 
@@ -20,6 +21,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     private readonly ITelegramMessageSender _messageSender;
     private readonly IIncomingMessageService _incomingMessageService;
     private readonly ITicketService _ticketService;
+    private readonly IAgentActionInvoker _agentActionInvoker;
     private readonly ILogger<TelegramWebhookService> _logger;
 
     public TelegramWebhookService(
@@ -29,6 +31,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         ITelegramMessageSender messageSender,
         IIncomingMessageService incomingMessageService,
         ITicketService ticketService,
+        IAgentActionInvoker agentActionInvoker,
         ILogger<TelegramWebhookService> logger)
     {
         _serviceNow = serviceNow;
@@ -37,6 +40,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         _messageSender = messageSender;
         _incomingMessageService = incomingMessageService;
         _ticketService = ticketService;
+        _agentActionInvoker = agentActionInvoker;
         _logger = logger;
     }
 
@@ -203,22 +207,28 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         var ticket = await _ticketService.GetBySysIdAsync(incident.SysId, ct);
         if (ticket is null)
         {
-            // TODO: fallback to ServiceNow lookup by SysId, if found create the ticket locally then continue
-            return $"No encontre el ticket {incident.Number} en el sistema. Intenta nuevamente mas tarde.";
+            ticket = await _ticketService.SyncIncidentAsync(incident, ct);
         }
 
-        await _incomingMessageService.ProcessIncomingAsync(new IncomingMessageRequest(
-            TicketId: ticket.Id,
-            SysId: incident.SysId, // TODO: replace with Telegram MessageId once available on TelegramUpdate
-            ConversationSysId: chatId,
-            SenderType: "customer",
-            SenderName: chatId, // TODO: replace with Telegram user's real name once available
-            Body: $"{incident.Title} {incident.Description}".Trim(),
-            MessageType: "user_message",
-            SentAt: DateTime.UtcNow
-        ), ct);
+        try
+        {
+            await _incomingMessageService.ProcessIncomingAsync(new IncomingMessageRequest(
+                TicketId: ticket.Id,
+                SysId: incident.SysId, // TODO: replace with Telegram MessageId once available on TelegramUpdate
+                ConversationSysId: chatId,
+                SenderType: "customer",
+                SenderName: chatId, // TODO: replace with Telegram user's real name once available
+                Body: $"{incident.Title} {incident.Description}".Trim(),
+                MessageType: "user_message",
+                SentAt: DateTime.UtcNow
+            ), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist Telegram conversation for ticket {TicketNumber}. Continuing with analysis.", incident.Number);
+        }
 
-        return $"Estamos procesando tu caso {incident.Number}, aguarda un momento.";
+        return await AnalyzeAndRouteAsync(incident, ct);
     }
 
     private async Task<string> AnalyzeAndRouteAsync(ServiceNowIncident incident, CancellationToken ct)
@@ -320,6 +330,26 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         if (!markedInProgress)
             builder.AppendLine("Aviso: no pude actualizar ServiceNow con esta decision, pero el analisis de KB se completo.");
 
+        if (ShouldInvokeAccessAgent(selectedArticle))
+        {
+            var email = ExtractEmail(incident);
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                builder.AppendLine();
+                builder.AppendLine("Me falta el email registrado en la turnera para ejecutar el agente de acceso.");
+                return builder.ToString().Trim();
+            }
+
+            var diagnostic = $"DELEGAR_A: AgenteAccionAcceso | TICKET: {incident.Number} | ACCION: resetear_acceso | USUARIO: {email}";
+            var actionResult = await _agentActionInvoker.ExecuteAsync(diagnostic, ct);
+
+            builder.AppendLine();
+            builder.AppendLine("Ejecucion del agente:");
+            builder.AppendLine(actionResult.Success
+                ? ExtractAgentSummary(actionResult.Output)
+                : $"No pude ejecutar AgenteAccion. Motivo: {actionResult.Error}");
+        }
+
         return builder.ToString().Trim();
     }
 
@@ -339,11 +369,12 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     {
         var hasDescription = state.HasDescription || HasMeaningfulDescription(incident);
         var hasSystem = state.HasSystem || CanInferSystem(incident);
+        var hasEmail = state.HasEmail || HasUsableEmail(incident);
 
         if (hasDescription && ContainsHighRiskSignal($"{incident.Title} {incident.Description}".ToLowerInvariant()))
             return null;
 
-        if (hasDescription && hasSystem)
+        if (hasDescription && hasSystem && hasEmail)
             return null;
 
         if (!hasDescription)
@@ -351,6 +382,9 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
         if (!hasSystem)
             return MissingTicketField.System;
+
+        if (!hasEmail)
+            return MissingTicketField.Email;
 
         return null;
     }
@@ -531,12 +565,50 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             text.Contains("inventario");
     }
 
+    internal static bool HasUsableEmail(ServiceNowIncident incident)
+        => !string.IsNullOrWhiteSpace(incident.CreatedByEmail) ||
+            EmailRegex().IsMatch($"{incident.Title} {incident.Description}");
+
+    private static string? ExtractEmail(ServiceNowIncident incident)
+    {
+        if (!string.IsNullOrWhiteSpace(incident.CreatedByEmail))
+            return incident.CreatedByEmail.Trim();
+
+        var match = EmailRegex().Match($"{incident.Title} {incident.Description}");
+        return match.Success ? match.Value : null;
+    }
+
+    private static bool ShouldInvokeAccessAgent(KnowledgeBaseSearchResult article)
+    {
+        var text = $"{article.Actions} {article.RecommendedAction} {article.Tags} {article.System} {article.Description}".ToLowerInvariant();
+        return text.Contains("resetear_acceso") ||
+            (text.Contains("reset") && (text.Contains("acceso") || text.Contains("login") || text.Contains("sesion")));
+    }
+
+    private static string ExtractAgentSummary(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return "AgenteAccion termino sin devolver detalle.";
+
+        var lines = output
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !line.StartsWith("Conectando al MCP", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("===", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("Pega", StringComparison.OrdinalIgnoreCase) && !line.StartsWith("Peg", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("Diagn", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.StartsWith("Sesion", StringComparison.OrdinalIgnoreCase) && !line.StartsWith("Sesi", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return lines.Count == 0 ? output.Trim() : string.Join(Environment.NewLine, lines.TakeLast(6));
+    }
+
     private static string BuildMissingFieldQuestion(string ticketNumber, MissingTicketField field)
         => field switch
         {
             MissingTicketField.Description => $"Encontre el ticket {ticketNumber}, pero falta una descripcion clara. Contame que problema tenes y que estabas intentando hacer.",
             MissingTicketField.System => $"Encontre el ticket {ticketNumber}. Para derivarlo bien, decime que sistema esta afectado: usuarios, pedidos, pagos, catalogo o stock.",
-            MissingTicketField.Email => $"Encontre el ticket {ticketNumber}. Me falta un email de contacto. Cual es tu email?",
+            MissingTicketField.Email => $"Encontre el ticket {ticketNumber}. Para operar sobre tu usuario de la turnera, decime el email con el que estas registrado.",
             _ => $"Encontre el ticket {ticketNumber}. Me falta un dato mas para poder derivarlo."
         };
 
@@ -575,6 +647,9 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
     [GeneratedRegex(@"\bINC[\s-]*\d{4,12}\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TicketNumberRegex();
+
+    [GeneratedRegex(@"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EmailRegex();
 }
 
 public sealed record PendingTicketQuestion(
@@ -601,13 +676,15 @@ public sealed class TicketIntakeState
     public string SysId { get; }
     public bool HasDescription { get; private set; }
     public bool HasSystem { get; private set; }
+    public bool HasEmail { get; private set; }
 
     public static TicketIntakeState FromIncident(ServiceNowIncident incident)
     {
         var state = new TicketIntakeState(incident.Number, incident.SysId)
         {
             HasDescription = TelegramWebhookService.HasMeaningfulDescription(incident),
-            HasSystem = TelegramWebhookService.CanInferSystem(incident)
+            HasSystem = TelegramWebhookService.CanInferSystem(incident),
+            HasEmail = TelegramWebhookService.HasUsableEmail(incident)
         };
 
         return state;
@@ -624,6 +701,7 @@ public sealed class TicketIntakeState
                 HasSystem = true;
                 break;
             case MissingTicketField.Email:
+                HasEmail = true;
                 break;
         }
     }
