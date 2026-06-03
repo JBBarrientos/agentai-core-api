@@ -62,6 +62,7 @@ builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
 builder.Services.AddQueueModule(builder.Configuration, builder.Environment);
 builder.Services.AddServiceNowModule();
+builder.Services.AddScoped<IAgentIntakeInvoker, AgentIntakeInvoker>();
 builder.Services.AddScoped<IAgentActionInvoker, AgentActionInvoker>();
 
 builder.Services.AddCors(options =>

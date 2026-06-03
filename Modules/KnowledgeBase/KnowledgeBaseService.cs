@@ -1,4 +1,6 @@
 using MySqlConnector;
+using System.Globalization;
+using System.Text;
 
 namespace AgentAI.Modules.KnowledgeBase;
 
@@ -103,7 +105,7 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
             LIMIT @limit;
             """;
 
-        var normalizedQuery = Normalize(query);
+        var normalizedQuery = ExtractSearchKeyword(Normalize(query));
         var normalizedSystem = Normalize(system);
 
         await using var connection = new MySqlConnection(GetConnectionString());
@@ -229,6 +231,43 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
         return string.IsNullOrWhiteSpace(database) ? string.Empty : $"`{database}`.";
     }
 
+    private static string ExtractSearchKeyword(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        if (value.Contains("credencial"))
+            return "credencial";
+
+        if (value.Contains("sesion"))
+            return "sesion";
+
+        if (value.Contains("contrasena"))
+            return "contrasena";
+
+        if (value.Contains("password"))
+            return "password";
+
+        if (value.Contains("login"))
+            return "login";
+
+        return ExtractKeyword(value);
+    }
+
     private static string Normalize(string? value)
-        => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+                builder.Append(character);
+        }
+
+        return builder.ToString().Normalize(NormalizationForm.FormC);
+    }
 }
