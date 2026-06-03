@@ -9,8 +9,36 @@ public static class TicketEndpoints
         var group = app.MapGroup("/tickets")
                        .WithTags("Tickets");
 
-        group.MapGet("/", async (ITicketService service, CancellationToken ct) =>
-            Results.Ok(await service.GetAllAsync(ct)));
+        group.MapGet("/", async (
+            string? estado,
+            string? prioridad,
+            DateOnly? desde,
+            DateOnly? hasta,
+            ITicketService service,
+            CancellationToken ct) =>
+        {
+            var tickets = await service.GetAllAsync(ct);
+
+            if (!string.IsNullOrWhiteSpace(estado))
+                tickets = tickets.Where(t =>
+                    t.StateLabel.Equals(estado, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(prioridad))
+                tickets = tickets.Where(t =>
+                    t.PriorityLabel.Equals(prioridad, StringComparison.OrdinalIgnoreCase));
+
+            if (desde.HasValue)
+                tickets = tickets.Where(t => DateOnly.FromDateTime(t.OpenedAt) >= desde.Value);
+
+            if (hasta.HasValue)
+                tickets = tickets.Where(t => DateOnly.FromDateTime(t.OpenedAt) <= hasta.Value);
+
+            return Results.Ok(tickets);
+        });
+
+        group.MapGet("/escalados", async (ITicketService service, CancellationToken ct) =>
+            Results.Ok(await service.GetEscaladosAsync(ct)))
+            .AllowAnonymous();
 
         group.MapGet("/{id:int}", async (int id, ITicketService service, CancellationToken ct) =>
             await service.GetByIdAsync(id, ct) is { } ticket

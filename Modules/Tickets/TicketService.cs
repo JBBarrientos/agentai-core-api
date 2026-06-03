@@ -26,6 +26,9 @@ public class TicketService : ITicketService
     public async Task<IEnumerable<Ticket>> GetAllAsync(CancellationToken ct = default)
         => await _repository.GetAllAsync(ct);
 
+    public async Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default)
+        => await _repository.GetEscaladosAsync(ct);
+
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
     public async Task<Ticket?> GetBySysIdAsync(string sysId, CancellationToken ct = default)

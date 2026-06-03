@@ -3,6 +3,7 @@
 public interface ITicketRepository
 {
     Task<IEnumerable<Ticket>> GetAllAsync(CancellationToken ct = default);
+    Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default);
     Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default);
     Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default);
     Task<Ticket?> GetBySysIdAsync(string sysId, CancellationToken ct = default);

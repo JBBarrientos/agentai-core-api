@@ -18,6 +18,7 @@ using AgentAI.Modules.ServiceNow;
 using AgentAI.Modules.Notifications;
 using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.AgentActions;
+using AgentAI.Modules.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -78,7 +79,15 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
 app.UseCors("AllowAll");
-app.UseAuthentication(); 
+
+// Swagger antes de auth para que no quede bloqueado por la política global
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthModule();
 app.MapNotificationModule();
@@ -91,13 +100,7 @@ app.MapAuditLogModule();
 app.MapAgentRunModule();
 app.MapAgentStepModule();
 app.MapKbUsageModule();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.MapMetricsModule();
 
 //app.UseHttpsRedirection();
 
