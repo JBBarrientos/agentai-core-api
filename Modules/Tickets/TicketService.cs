@@ -26,6 +26,9 @@ public class TicketService : ITicketService
     public async Task<IEnumerable<Ticket>> GetAllAsync(CancellationToken ct = default)
         => await _repository.GetAllAsync(ct);
 
+    public async Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default)
+        => await _repository.GetEscaladosAsync(ct);
+
     public async Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
     public async Task<Ticket?> GetBySysIdAsync(string sysId, CancellationToken ct = default)
@@ -82,6 +85,22 @@ public class TicketService : ITicketService
         ticket.LastSyncedAt = DateTime.UtcNow;
 
         await _repository.UpdateAsync(ticket, ct);
+        if (ticket.State == 4 && !string.IsNullOrWhiteSpace(ticket.SysId))
+        {
+            try
+            {
+                await _serviceNow.ResolveIncidentAsync(
+                    ticket.SysId,
+                    req.Description ?? "Ticket resuelto por AgentAI.",
+                    "AgentAI marco el ticket como resuelto desde el agente de accion.",
+                    ct: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not resolve ServiceNow incident for local ticket {TicketNumber}.", ticket.Number);
+            }
+        }
+
         return true;
     }
     public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
@@ -132,6 +151,21 @@ public class TicketService : ITicketService
 
         _logger.LogInformation("Synced {Count} ServiceNow incidents.", syncedTickets.Count);
         return syncedTickets;
+    }
+
+    public async Task<Ticket> SyncIncidentAsync(ServiceNowIncident incident, CancellationToken ct = default)
+    {
+        var existing = await _repository.GetBySysIdAsync(incident.SysId, ct);
+        var ticket = existing ?? new Ticket { SysId = incident.SysId };
+
+        ApplyIncident(ticket, incident);
+
+        if (existing is null)
+            await _repository.AddAsync(ticket, ct);
+        else
+            await _repository.UpdateAsync(ticket, ct);
+
+        return ticket;
     }
 
     public async Task<Ticket> CreateFromAgentAsync(CreateAgentTicketRequest req, CancellationToken ct = default)

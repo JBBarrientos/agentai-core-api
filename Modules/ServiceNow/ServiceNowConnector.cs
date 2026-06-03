@@ -272,6 +272,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         return candidates;
     }
 
+
     public async Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(comment)) throw new ArgumentException("comment is required", nameof(comment));

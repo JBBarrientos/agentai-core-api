@@ -57,6 +57,7 @@ public static class NotificationEndpoints
         .WithTags("Telegram")
         .AllowAnonymous();
 
+
         return app;
     }
 }

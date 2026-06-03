@@ -20,3 +20,16 @@ public sealed record KnowledgeBaseSearchResult(
     string Confidence
 );
 
+public sealed record DiagnosticarRequest(string Sistema, string Descripcion);
+
+public sealed record DiagnosticarResponse(
+    bool PuedoResolver,
+    string Decision,
+    string MensajeSugerido,
+    string CriteriosEscalacion,
+    string AccionesRecomendadas,
+    string Confianza,
+    int? ArticleId,
+    string? ArticleCode
+);
+

@@ -1,18 +1,15 @@
-using System.Data;
+using MySqlConnector;
+using System.Globalization;
 using System.Text;
-using AgentAI.Data;
-using Microsoft.EntityFrameworkCore;
 
 namespace AgentAI.Modules.KnowledgeBase;
 
 public sealed class KnowledgeBaseService : IKnowledgeBaseService
 {
-    private readonly AppDbContext _db;
     private readonly IConfiguration _configuration;
 
-    public KnowledgeBaseService(AppDbContext db, IConfiguration configuration)
+    public KnowledgeBaseService(IConfiguration configuration)
     {
-        _db = db;
         _configuration = configuration;
     }
 
@@ -108,27 +105,30 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
             LIMIT @limit;
             """;
 
-        var normalizedQuery = Normalize(query);
+        var normalizedQuery = ExtractSearchKeyword(Normalize(query));
         var normalizedSystem = Normalize(system);
 
-        await using var connection = _db.Database.GetDbConnection();
-        if (connection.State != ConnectionState.Open)
-            await connection.OpenAsync(ct);
+        await using var connection = new MySqlConnection(GetConnectionString());
+        await connection.OpenAsync(ct);
+
+        await using var setMode = connection.CreateCommand();
+        setMode.CommandText = "SET SESSION sql_mode = ''";
+        await setMode.ExecuteNonQueryAsync(ct);
 
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        AddParameter(command, "queryFilter", normalizedQuery);
-        AddParameter(command, "systemFilter", normalizedSystem);
-        AddParameter(command, "queryLike", $"%{normalizedQuery}%");
-        AddParameter(command, "systemLike", $"%{normalizedSystem}%");
-        AddParameter(command, "limit", limit);
+        command.Parameters.AddWithValue("@queryFilter", normalizedQuery);
+        command.Parameters.AddWithValue("@systemFilter", normalizedSystem);
+        command.Parameters.AddWithValue("@queryLike", $"%{normalizedQuery}%");
+        command.Parameters.AddWithValue("@systemLike", $"%{normalizedSystem}%");
+        command.Parameters.AddWithValue("@limit", limit);
 
         var results = new List<KnowledgeBaseSearchResult>();
         await using var reader = await command.ExecuteReaderAsync(ct);
 
         while (await reader.ReadAsync(ct))
         {
-            var score = reader.GetDecimal("score");
+            var score = Convert.ToDecimal(reader["score"]);
             results.Add(new KnowledgeBaseSearchResult(
                 reader.GetInt32("article_id"),
                 reader.GetString("article_code"),
@@ -146,11 +146,84 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
                 reader.GetString("expected_result"),
                 reader.GetString("escalation_criteria"),
                 reader.GetString("suggested_user_message"),
-                score >= 8 ? "alta" : score >= 4 ? "media" : "baja"));
+                score >= 3 ? "alta" : score >= 2 ? "media" : "baja"));
         }
 
         return results;
     }
+
+    public async Task<DiagnosticarResponse> DiagnosticarAsync(
+        string sistema,
+        string descripcion,
+        CancellationToken ct = default)
+    {
+        var keyword = ExtractKeyword(descripcion);
+        var results = await SearchAsync(keyword, system: null, limit: 3, ct);
+
+        if (results.Count == 0)
+            return new DiagnosticarResponse(
+                PuedoResolver: false,
+                Decision: "escalar",
+                MensajeSugerido: "No encontré información en la base de conocimiento para resolver este caso. Lo escalo a soporte de nivel 2.",
+                CriteriosEscalacion: string.Empty,
+                AccionesRecomendadas: string.Empty,
+                Confianza: "ninguna",
+                ArticleId: null,
+                ArticleCode: null);
+
+        var top = results[0];
+        var decision = ResolveDecision(top);
+
+        return new DiagnosticarResponse(
+            PuedoResolver: decision == "continuar",
+            Decision: decision,
+            MensajeSugerido: top.SuggestedUserMessage,
+            CriteriosEscalacion: top.EscalationCriteria,
+            AccionesRecomendadas: top.RecommendedAction,
+            Confianza: top.Confidence,
+            ArticleId: top.ArticleId,
+            ArticleCode: top.ArticleCode);
+    }
+
+    private static string ResolveDecision(KnowledgeBaseSearchResult article)
+    {
+        var escalationKeywords = new[] { "escalar", "nivel 2", "especialista", "soporte avanzado" };
+        var hasEscalationCriteria = escalationKeywords.Any(k =>
+            article.EscalationCriteria.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+        if (hasEscalationCriteria && article.Confidence != "alta")
+            return "escalar";
+
+        if (article.Confidence == "baja")
+            return "escalar";
+
+        if (article.Confidence == "media" && !string.IsNullOrWhiteSpace(article.RequiredData))
+            return "pedir_mas_info";
+
+        return "continuar";
+    }
+
+    private static string ExtractKeyword(string description)
+    {
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "no", "me", "la", "el", "en", "de", "mi", "se", "lo", "que", "un", "una",
+            "es", "al", "del", "con", "por", "para", "como", "pero", "si", "ya", "su",
+            "le", "yo", "tu", "y", "a", "o", "fue", "han", "hay", "hace", "cada",
+            "esto", "esta", "este", "puedo", "pero", "figura", "tengo"
+        };
+
+        var keyword = description
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.Trim('.', ',', ';', ':', '!', '?'))
+            .FirstOrDefault(w => w.Length > 5 && !stopWords.Contains(w));
+
+        return keyword ?? description[..Math.Min(30, description.Length)];
+    }
+
+    private string GetConnectionString()
+        => _configuration["KnowledgeBase:ConnectionString"]
+            ?? throw new InvalidOperationException("KnowledgeBase:ConnectionString no está configurado.");
 
     private string GetSchemaPrefix()
     {
@@ -158,15 +231,43 @@ public sealed class KnowledgeBaseService : IKnowledgeBaseService
         return string.IsNullOrWhiteSpace(database) ? string.Empty : $"`{database}`.";
     }
 
-    private static string Normalize(string? value)
-        => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
-
-    private static void AddParameter(IDbCommand command, string name, object value)
+    private static string ExtractSearchKeyword(string value)
     {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = $"@{name}";
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        if (value.Contains("credencial"))
+            return "credencial";
+
+        if (value.Contains("sesion"))
+            return "sesion";
+
+        if (value.Contains("contrasena"))
+            return "contrasena";
+
+        if (value.Contains("password"))
+            return "password";
+
+        if (value.Contains("login"))
+            return "login";
+
+        return ExtractKeyword(value);
+    }
+
+    private static string Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+                builder.Append(character);
+        }
+
+        return builder.ToString().Normalize(NormalizationForm.FormC);
     }
 }
-

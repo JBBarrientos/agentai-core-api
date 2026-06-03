@@ -14,8 +14,11 @@ using AgentAI.Modules.AuditLog;
 using AgentAI.Modules.AgentRuns;
 using AgentAI.Modules.AgentSteps;
 using AgentAI.Modules.KbUsages;
+using AgentAI.Modules.ServiceNow;
 using AgentAI.Modules.Notifications;
 using AgentAI.Modules.KnowledgeBase;
+using AgentAI.Modules.AgentActions;
+using AgentAI.Modules.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +40,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
+if (UseInMemoryTickets(builder.Configuration))
+{
+    builder.Services.AddSingleton<InMemoryTicketStore>();
+    builder.Services.AddScoped<ITicketRepository, InMemoryTicketRepository>();
+}
 builder.Services.AddConversationModule();
 builder.Services.AddAuditLogModule();
 builder.Services.AddAgentRunModule();
@@ -54,6 +62,9 @@ builder.Services.Configure<CognitoOptions>(
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
 builder.Services.AddQueueModule(builder.Configuration, builder.Environment);
+builder.Services.AddServiceNowModule();
+builder.Services.AddScoped<IAgentIntakeInvoker, AgentIntakeInvoker>();
+builder.Services.AddScoped<IAgentActionInvoker, AgentActionInvoker>();
 
 builder.Services.AddCors(options =>
 {
@@ -68,7 +79,15 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
 app.UseCors("AllowAll");
-app.UseAuthentication(); 
+
+// Swagger antes de auth para que no quede bloqueado por la política global
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthModule();
 app.MapNotificationModule();
@@ -81,13 +100,7 @@ app.MapAuditLogModule();
 app.MapAgentRunModule();
 app.MapAgentStepModule();
 app.MapKbUsageModule();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.MapMetricsModule();
 
 //app.UseHttpsRedirection();
 
@@ -120,6 +133,17 @@ if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
     db.Database.Migrate();
 }
 app.Run();
+
+static bool UseInMemoryTickets(IConfiguration configuration)
+{
+    if (configuration.GetValue("Tickets:UseInMemory", false))
+        return true;
+
+    var connectionString = configuration.GetConnectionString("DefaultConnection");
+    return connectionString?.StartsWith("postgres", StringComparison.OrdinalIgnoreCase) == true
+        || connectionString?.Contains("Host=", StringComparison.OrdinalIgnoreCase) == true
+        || connectionString?.Contains("Port=", StringComparison.OrdinalIgnoreCase) == true;
+}
 
 internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 {

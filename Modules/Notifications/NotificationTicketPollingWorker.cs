@@ -119,6 +119,7 @@ public sealed class NotificationTicketPollingWorker : BackgroundService
     private static string GetDisplayName(ServiceNowIncident ticket)
         => string.IsNullOrWhiteSpace(ticket.CreatedByName) ? "buenas" : ticket.CreatedByName;
 
+
     private string BuildPollingQuery()
     {
         var configuredQuery = _configuration["Notifications:PollingQuery"];

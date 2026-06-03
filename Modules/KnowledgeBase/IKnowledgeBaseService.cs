@@ -7,5 +7,10 @@ public interface IKnowledgeBaseService
         string? system,
         int limit = 5,
         CancellationToken ct = default);
+
+    Task<DiagnosticarResponse> DiagnosticarAsync(
+        string sistema,
+        string descripcion,
+        CancellationToken ct = default);
 }
 
