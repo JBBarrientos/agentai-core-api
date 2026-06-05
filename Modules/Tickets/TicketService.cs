@@ -9,17 +9,20 @@ public class TicketService : ITicketService
 {
     private readonly ITicketRepository _repository;
     private readonly ILogger<TicketService> _logger;
+    private readonly IConfiguration _configuration;
     private readonly IQueueService _queueService;
     private readonly IServiceNowConnector _serviceNow;
 
     public TicketService(
         ITicketRepository repository,
         ILogger<TicketService> logger,
+        IConfiguration configuration,
         IServiceNowConnector serviceNow,
         [FromKeyedServices("inbound")] IQueueService queueService)
     {
         _repository = repository;
         _logger = logger;
+        _configuration = configuration;
         _serviceNow = serviceNow;
         _queueService = queueService;
     }
@@ -42,6 +45,7 @@ public class TicketService : ITicketService
             StateLabel = req.StateLabel,
             Priority = req.Priority,
             PriorityLabel = req.PriorityLabel,
+            AffectedSystem = NormalizeAffectedSystem(req.AffectedSystem) ?? InferAffectedSystem($"{req.Title} {req.Description}"),
             OpenedAt = req.OpenedAt,
             UpdatedAt = DateTime.UtcNow,
             LastSyncedAt = DateTime.UtcNow
@@ -58,6 +62,8 @@ public class TicketService : ITicketService
             StateLabel: ticket.StateLabel,
             Priority: ticket.Priority,
             PriorityLabel: ticket.PriorityLabel,
+            AssignmentGroup: ticket.AssignmentGroup,
+            AffectedSystem: ticket.AffectedSystem,
             OpenedAt: ticket.OpenedAt,
             UpdatedAt: ticket.UpdatedAt,
             ResolvedAt: ticket.ResolvedAt,
@@ -76,6 +82,8 @@ public class TicketService : ITicketService
         if (req.StateLabel is not null) ticket.StateLabel = req.StateLabel;
         if (req.Priority is not null) ticket.Priority = req.Priority.Value;
         if (req.PriorityLabel is not null) ticket.PriorityLabel = req.PriorityLabel;
+        if (req.AssignmentGroup is not null) ticket.AssignmentGroup = req.AssignmentGroup;
+        if (req.AffectedSystem is not null) ticket.AffectedSystem = NormalizeAffectedSystem(req.AffectedSystem) ?? string.Empty;
         if (req.ResolvedAt is not null) ticket.ResolvedAt = req.ResolvedAt;
 
         ticket.UpdatedAt = DateTime.UtcNow;
@@ -122,13 +130,30 @@ public class TicketService : ITicketService
 
     public async Task<IEnumerable<ServiceNowTicketResponse>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
     {
-        var incidents = await _serviceNow.GetIncidentsAsync(limit, query, ct);
+        var incidents = await _serviceNow.GetIncidentsAsync(limit, BuildServiceNowQuery(query), ct);
+        return incidents.Select(MapIncidentToServiceNowResponse);
+    }
+
+    public async Task<IEnumerable<ServiceNowTicketResponse>> GetAllFromServiceNowAsync(int pageSize = 100, int maxPages = 50, string? query = null, CancellationToken ct = default)
+    {
+        var incidents = await _serviceNow.GetIncidentsPagedAsync(pageSize, maxPages, BuildServiceNowQuery(query), ct);
         return incidents.Select(MapIncidentToServiceNowResponse);
     }
 
     public async Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default)
     {
-        var incidents = await _serviceNow.GetIncidentsAsync(limit, query, ct);
+        var incidents = await _serviceNow.GetIncidentsAsync(limit, BuildServiceNowQuery(query), ct);
+        return await UpsertServiceNowIncidentsAsync(incidents, ct);
+    }
+
+    public async Task<IEnumerable<Ticket>> SyncAllFromServiceNowAsync(int pageSize = 100, int maxPages = 50, string? query = null, CancellationToken ct = default)
+    {
+        var incidents = await _serviceNow.GetIncidentsPagedAsync(pageSize, maxPages, BuildServiceNowQuery(query), ct);
+        return await UpsertServiceNowIncidentsAsync(incidents, ct);
+    }
+
+    private async Task<IEnumerable<Ticket>> UpsertServiceNowIncidentsAsync(IReadOnlyList<ServiceNowIncident> incidents, CancellationToken ct)
+    {
         var syncedTickets = new List<Ticket>();
 
         foreach (var incident in incidents)
@@ -179,6 +204,7 @@ public class TicketService : ITicketService
             Priority = 3,
             PriorityLabel = "Moderate",
             CreatedByEmail = req.UserEmail,
+            AffectedSystem = NormalizeAffectedSystem(req.System) ?? InferAffectedSystem($"{req.System} {req.Description}"),
             OpenedAt = now,
             UpdatedAt = now,
             LastSyncedAt = now
@@ -207,6 +233,8 @@ public class TicketService : ITicketService
             incident.PriorityLabel,
             incident.CreatedByName,
             incident.CreatedByEmail,
+            incident.AssignmentGroup,
+            InferAffectedSystem($"{incident.Title} {incident.Description}"),
             incident.OpenedAt,
             incident.UpdatedAt,
             incident.ResolvedAt,
@@ -223,6 +251,9 @@ public class TicketService : ITicketService
         ticket.PriorityLabel = incident.PriorityLabel;
         ticket.CreatedByName = incident.CreatedByName;
         ticket.CreatedByEmail = incident.CreatedByEmail;
+        ticket.AssignmentGroup = incident.AssignmentGroup;
+        if (string.IsNullOrWhiteSpace(ticket.AffectedSystem))
+            ticket.AffectedSystem = InferAffectedSystem($"{incident.Title} {incident.Description}");
         ticket.OpenedAt = incident.OpenedAt ?? DateTime.UtcNow;
         ticket.UpdatedAt = incident.UpdatedAt ?? DateTime.UtcNow;
         ticket.ResolvedAt = incident.ResolvedAt;
@@ -240,5 +271,96 @@ public class TicketService : ITicketService
         while (await _repository.GetByNumberAsync(number, ct) is not null);
 
         return number;
+    }
+
+    private string BuildServiceNowQuery(string? query)
+    {
+        var minIncidentNumber = _configuration["ServiceNow:MinIncidentNumber"] ?? "INC0010000";
+        var baseQuery = string.IsNullOrWhiteSpace(query) ? "ORDERBYDESCsys_updated_on" : query.Trim();
+
+        if (string.IsNullOrWhiteSpace(minIncidentNumber) ||
+            baseQuery.Contains("number", StringComparison.OrdinalIgnoreCase))
+        {
+            return baseQuery;
+        }
+
+        return $"number>={minIncidentNumber}^{baseQuery}";
+    }
+
+    private static string InferAffectedSystem(string text)
+    {
+        var normalized = NormalizeForMatching(text);
+
+        if (normalized.Contains("pago") ||
+            normalized.Contains("credito") ||
+            normalized.Contains("creditos") ||
+            normalized.Contains("tarjeta") ||
+            normalized.Contains("debito") ||
+            normalized.Contains("cobro") ||
+            normalized.Contains("cargo"))
+            return "pagos";
+
+        if (normalized.Contains("turnera") ||
+            normalized.Contains("turno") ||
+            normalized.Contains("reserva") ||
+            normalized.Contains("clase"))
+            return "turnera";
+
+        if (normalized.Contains("usuario") ||
+            normalized.Contains("login") ||
+            normalized.Contains("logue") ||
+            normalized.Contains("sesion") ||
+            normalized.Contains("credencial") ||
+            normalized.Contains("contrasena") ||
+            normalized.Contains("password") ||
+            normalized.Contains("acceso"))
+            return "usuarios";
+
+        if (normalized.Contains("pedido") || normalized.Contains("ord-"))
+            return "pedidos";
+
+        if (normalized.Contains("catalogo") ||
+            normalized.Contains("precio") ||
+            normalized.Contains("producto"))
+            return "catalogo";
+
+        if (normalized.Contains("stock") ||
+            normalized.Contains("inventario") ||
+            normalized.Contains("existencia"))
+            return "stock";
+
+        return "sin clasificar";
+    }
+
+    private static string? NormalizeAffectedSystem(string? value)
+    {
+        var normalized = NormalizeForMatching(value ?? string.Empty);
+        return normalized switch
+        {
+            "turnera" => "turnera",
+            "usuarios" or "usuario" => "usuarios",
+            "pedidos" or "pedido" => "pedidos",
+            "pagos" or "pago" => "pagos",
+            "catalogo" or "catálogo" => "catalogo",
+            "stock" => "stock",
+            _ => null
+        };
+    }
+
+    private static string NormalizeForMatching(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var builder = new System.Text.StringBuilder(normalized.Length);
+
+        foreach (var character in normalized)
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(character) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                builder.Append(character);
+        }
+
+        return builder.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
 }

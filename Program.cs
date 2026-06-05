@@ -18,6 +18,7 @@ using AgentAI.Modules.ServiceNow;
 using AgentAI.Modules.Notifications;
 using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.AgentActions;
+using AgentAI.Modules.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,7 +36,12 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    var defaultConnection = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection no esta configurado.");
+
+    options.UseMySql(defaultConnection, ServerVersion.AutoDetect(defaultConnection));
+});
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
@@ -91,6 +97,7 @@ app.MapAuditLogModule();
 app.MapAgentRunModule();
 app.MapAgentStepModule();
 app.MapKbUsageModule();
+app.MapMetricsModule();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -138,8 +145,7 @@ static bool UseInMemoryTickets(IConfiguration configuration)
 
     var connectionString = configuration.GetConnectionString("DefaultConnection");
     return connectionString?.StartsWith("postgres", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("Host=", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("Port=", StringComparison.OrdinalIgnoreCase) == true;
+        || connectionString?.Contains("Host=", StringComparison.OrdinalIgnoreCase) == true;
 }
 
 internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)

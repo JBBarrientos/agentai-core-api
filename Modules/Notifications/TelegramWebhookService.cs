@@ -8,6 +8,11 @@ using AgentAI.Modules.Messages;
 using AgentAI.Modules.Tickets;
 using AgentAI.Modules.Messages.Dto;
 using AgentAI.Modules.AgentActions;
+using AgentAI.Modules.Tickets.Dto;
+using AgentAI.Modules.AgentRuns;
+using AgentAI.Modules.AgentRuns.Dto;
+using AgentAI.Modules.AgentSteps;
+using AgentAI.Modules.AgentSteps.Dto;
 
 namespace AgentAI.Modules.Notifications;
 
@@ -24,6 +29,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     private readonly ITicketService _ticketService;
     private readonly IAgentIntakeInvoker _agentIntakeInvoker;
     private readonly IAgentActionInvoker _agentActionInvoker;
+    private readonly IAgentRunService _agentRunService;
+    private readonly IAgentStepService _agentStepService;
     private readonly ILogger<TelegramWebhookService> _logger;
 
     public TelegramWebhookService(
@@ -35,6 +42,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         ITicketService ticketService,
         IAgentIntakeInvoker agentIntakeInvoker,
         IAgentActionInvoker agentActionInvoker,
+        IAgentRunService agentRunService,
+        IAgentStepService agentStepService,
         ILogger<TelegramWebhookService> logger)
     {
         _serviceNow = serviceNow;
@@ -45,6 +54,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         _ticketService = ticketService;
         _agentIntakeInvoker = agentIntakeInvoker;
         _agentActionInvoker = agentActionInvoker;
+        _agentRunService = agentRunService;
+        _agentStepService = agentStepService;
         _logger = logger;
     }
 
@@ -239,20 +250,38 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             _logger.LogWarning(ex, "Could not persist Telegram conversation for ticket {TicketNumber}. Continuing with analysis.", incident.Number);
         }
 
-        return await AnalyzeAndRouteAsync(chatId, incident, ct);
+        return await AnalyzeAndRouteAsync(chatId, incident, ticket.Id, ct);
     }
 
-    private async Task<string> AnalyzeAndRouteAsync(string chatId, ServiceNowIncident incident, CancellationToken ct)
+    private async Task<string> AnalyzeAndRouteAsync(string chatId, ServiceNowIncident incident, int ticketId, CancellationToken ct)
     {
+        var run = await _agentRunService.CreateAsync(new CreateAgentRunRequest(ticketId), ct);
         var intakeResult = await _agentIntakeInvoker.AnalyzeAsync(incident, ct);
+        var intakeStepStatus = intakeResult.Succeeded && intakeResult.Decision is not null
+            ? (intakeResult.Decision.Decision.Equals("escalar", StringComparison.OrdinalIgnoreCase) ? "failed" : "completed")
+            : "failed";
+        await RecordAgentStepAsync(
+            run.Id,
+            "AgenteEntrada",
+            $"{incident.Number} | {incident.Title}",
+            "Analizar ticket, sistema afectado y KB",
+            intakeStepStatus,
+            intakeResult.Succeeded
+                ? intakeResult.Output
+                : intakeResult.Error ?? "AgenteEntrada fallo sin detalle.",
+            ct);
+
         if (!intakeResult.Succeeded || intakeResult.Decision is null)
         {
             var error = intakeResult.Error ?? "AgenteEntrada no devolvio una decision valida.";
             _logger.LogWarning("AgenteEntrada failed for ticket {TicketNumber}. Error={Error}", incident.Number, error);
+            await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
             return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: No pude ejecutar AgenteEntrada para validar el caso con KB. Detalle: {error}";
         }
 
         var decision = intakeResult.Decision;
+        await PersistAffectedSystemAsync(incident.SysId, decision.System, ct);
+
         if (decision.Decision.Equals("pedir_info", StringComparison.OrdinalIgnoreCase))
         {
             var missingField = ParseMissingField(decision.MissingField);
@@ -260,6 +289,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: AgenteEntrada pidio informacion, pero no indico que campo falta.";
 
             PendingQuestions[chatId] = new PendingTicketQuestion(incident.Number, incident.SysId, missingField.Value);
+            await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
             return string.IsNullOrWhiteSpace(decision.Question)
                 ? BuildMissingFieldQuestion(incident.Number, missingField.Value)
                 : decision.Question;
@@ -306,6 +336,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             response.AppendLine(updatedServiceNow
                 ? "El ticket fue derivado a soporte especializado."
                 : "No pude actualizar ServiceNow con la escalacion, pero la decision es escalar.");
+            await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
             return response.ToString().Trim();
         }
 
@@ -348,6 +379,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             {
                 builder.AppendLine();
                 builder.AppendLine("Me falta el email registrado en la turnera para ejecutar el agente de acceso.");
+                await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
                 return builder.ToString().Trim();
             }
 
@@ -355,6 +387,16 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             var action = string.IsNullOrWhiteSpace(decision.Action) ? "resetear_acceso" : decision.Action;
             var diagnostic = $"DELEGAR_A: {agent} | TICKET: {incident.Number} | ACCION: {action} | USUARIO: {email}";
             var actionResult = await _agentActionInvoker.ExecuteAsync(diagnostic, ct);
+            await RecordAgentStepAsync(
+                run.Id,
+                agent,
+                diagnostic,
+                $"Ejecutar accion {action}",
+                actionResult.Success ? "completed" : "failed",
+                actionResult.Success
+                    ? actionResult.Output
+                    : actionResult.Error ?? "AgenteAccion fallo sin detalle.",
+                ct);
 
             builder.AppendLine();
             builder.AppendLine("Ejecucion del agente:");
@@ -363,7 +405,72 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 : $"No pude ejecutar AgenteAccion. Motivo: {actionResult.Error}");
         }
 
+        await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
         return builder.ToString().Trim();
+    }
+
+    private async Task RecordAgentStepAsync(
+        int runId,
+        string agentType,
+        string input,
+        string prompt,
+        string status,
+        string output,
+        CancellationToken ct)
+    {
+        try
+        {
+            var step = await _agentStepService.CreateAsync(new CreateAgentStepRequest(
+                AgentRunId: runId,
+                AgentType: agentType,
+                InputData: Truncate(input, 2000),
+                Prompt: Truncate(prompt, 1000)), ct);
+
+            await _agentStepService.UpdateAsync(step.Id, new UpdateAgentStepRequest(
+                Status: status,
+                OutputData: Truncate(output, 4000)), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist agent step for run {RunId} and agent {AgentType}.", runId, agentType);
+        }
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private async Task PersistAffectedSystemAsync(string sysId, string? system, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(system))
+            return;
+
+        try
+        {
+            var ticket = await _ticketService.GetBySysIdAsync(sysId, ct);
+            if (ticket is null)
+                return;
+
+            await _ticketService.UpdateAsync(ticket.Id, new UpdateTicketRequest(
+                Title: null,
+                Description: null,
+                State: null,
+                StateLabel: null,
+                Priority: null,
+                PriorityLabel: null,
+                AssignedTo: null,
+                AssignmentGroup: null,
+                AffectedSystem: system,
+                ResolvedAt: null), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist affected system for ticket sys_id {SysId}.", sysId);
+        }
     }
 
     private static TicketIntakeState GetOrCreateIntakeState(string chatId, ServiceNowIncident incident)

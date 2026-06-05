@@ -60,6 +60,16 @@ public class Ticket
     /// </summary>
     public string CreatedByEmail { get; set; } = string.Empty;
 
+    /// <summary>
+    /// ServiceNow assignment_group display name. Used to identify second-level escalations.
+    /// </summary>
+    public string AssignmentGroup { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Business system affected by the incident: turnera, usuarios, pedidos, pagos, catalogo or stock.
+    /// </summary>
+    public string AffectedSystem { get; set; } = string.Empty;
+
     // --- Audit timestamps ---
 
     public DateTime OpenedAt { get; set; }

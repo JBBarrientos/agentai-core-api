@@ -79,6 +79,8 @@ public sealed class InMemoryTicketRepository : ITicketRepository
             PriorityLabel = ticket.PriorityLabel,
             CreatedByName = ticket.CreatedByName,
             CreatedByEmail = ticket.CreatedByEmail,
+            AssignmentGroup = ticket.AssignmentGroup,
+            AffectedSystem = ticket.AffectedSystem,
             OpenedAt = ticket.OpenedAt,
             UpdatedAt = ticket.UpdatedAt,
             ResolvedAt = ticket.ResolvedAt,

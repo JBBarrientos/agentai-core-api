@@ -9,5 +9,6 @@ public record UpdateTicketRequest(
     string? PriorityLabel,
     string? AssignedTo,
     string? AssignmentGroup,
+    string? AffectedSystem,
     DateTime? ResolvedAt
 );

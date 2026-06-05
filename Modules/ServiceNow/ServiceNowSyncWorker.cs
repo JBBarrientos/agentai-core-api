@@ -28,24 +28,30 @@ public sealed class ServiceNowSyncWorker : BackgroundService
 
         var intervalMinutes = Math.Max(_configuration.GetValue("ServiceNow:SyncIntervalMinutes", 5), 1);
         var limit = Math.Max(_configuration.GetValue("ServiceNow:SyncLimit", 100), 1);
+        var syncAll = _configuration.GetValue("ServiceNow:SyncAll", false);
+        var pageSize = Math.Max(_configuration.GetValue("ServiceNow:SyncPageSize", 100), 1);
+        var maxPages = Math.Max(_configuration.GetValue("ServiceNow:SyncMaxPages", 50), 1);
         var query = _configuration["ServiceNow:SyncQuery"] ?? "ORDERBYDESCsys_updated_on";
 
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(intervalMinutes));
 
-        await SyncAsync(limit, query, stoppingToken);
+        await SyncAsync(limit, syncAll, pageSize, maxPages, query, stoppingToken);
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
-            await SyncAsync(limit, query, stoppingToken);
+            await SyncAsync(limit, syncAll, pageSize, maxPages, query, stoppingToken);
     }
 
-    private async Task SyncAsync(int limit, string query, CancellationToken ct)
+    private async Task SyncAsync(int limit, bool syncAll, int pageSize, int maxPages, string query, CancellationToken ct)
     {
         try
         {
             using var scope = _serviceProvider.CreateScope();
             var ticketService = scope.ServiceProvider.GetRequiredService<ITicketService>();
 
-            await ticketService.SyncFromServiceNowAsync(limit, query, ct);
+            if (syncAll)
+                await ticketService.SyncAllFromServiceNowAsync(pageSize, maxPages, query, ct);
+            else
+                await ticketService.SyncFromServiceNowAsync(limit, query, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

@@ -11,6 +11,8 @@ public sealed record ServiceNowTicketResponse(
     string PriorityLabel,
     string CreatedByName,
     string CreatedByEmail,
+    string AssignmentGroup,
+    string AffectedSystem,
     DateTime? OpenedAt,
     DateTime? UpdatedAt,
     DateTime? ResolvedAt,

@@ -9,5 +9,6 @@ public record CreateTicketRequest(
     string StateLabel,
     int Priority,
     string PriorityLabel,
+    string? AffectedSystem,
     DateTime OpenedAt
 );

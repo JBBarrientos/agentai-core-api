@@ -9,6 +9,8 @@ public record TicketResponse(
     string StateLabel,
     int Priority,
     string PriorityLabel,
+    string AssignmentGroup,
+    string AffectedSystem,
     DateTime OpenedAt,
     DateTime UpdatedAt,
     DateTime? ResolvedAt,
