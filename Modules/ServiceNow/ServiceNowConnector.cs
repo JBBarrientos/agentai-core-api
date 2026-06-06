@@ -15,6 +15,7 @@ public interface IServiceNowConnector
     Task AddCustomerCommentAsync(string sysId, string comment, CancellationToken ct = default);
     Task AddWorkNoteAsync(string sysId, string note, CancellationToken ct = default);
     Task MarkInProgressAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default);
+    Task MarkOnHoldAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default);
     Task ResolveIncidentAsync(string sysId, string closeNotes, string? workNote = null, string closeCode = "Solution provided", CancellationToken ct = default);
     Task EscalateIncidentAsync(string sysId, string assignmentGroupSysId, string workNote, string? customerComment = null, CancellationToken ct = default);
 }
@@ -303,6 +304,21 @@ public sealed class ServiceNowConnector : IServiceNowConnector
         await PatchIncidentAsync(sysId, fields, ct);
     }
 
+    public async Task MarkOnHoldAsync(string sysId, string workNote, string? customerComment = null, CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["state"] = "3",
+            ["incident_state"] = "3",
+            ["work_notes"] = workNote
+        };
+
+        if (!string.IsNullOrWhiteSpace(customerComment))
+            fields["comments"] = customerComment;
+
+        await PatchIncidentAsync(sysId, fields, ct);
+    }
+
     public async Task ResolveIncidentAsync(string sysId, string closeNotes, string? workNote = null, string closeCode = "Solution provided", CancellationToken ct = default)
     {
         var fields = new Dictionary<string, string>
@@ -326,8 +342,8 @@ public sealed class ServiceNowConnector : IServiceNowConnector
 
         var fields = new Dictionary<string, string>
         {
-            ["state"] = "2",
-            ["incident_state"] = "2",
+            ["state"] = "3",
+            ["incident_state"] = "3",
             ["assignment_group"] = assignmentGroupSysId,
             ["work_notes"] = workNote
         };

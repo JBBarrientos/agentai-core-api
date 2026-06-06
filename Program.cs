@@ -40,7 +40,17 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     var defaultConnection = builder.Configuration.GetConnectionString("DefaultConnection")
         ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection no esta configurado.");
 
-    options.UseMySql(defaultConnection, ServerVersion.AutoDetect(defaultConnection));
+    options.UseMySql(
+        defaultConnection,
+        ServerVersion.AutoDetect(defaultConnection),
+        mysqlOptions =>
+        {
+            mysqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorNumbersToAdd: null);
+            mysqlOptions.CommandTimeout(60);
+        });
 });
 
 builder.Services.AddHealthModule();
