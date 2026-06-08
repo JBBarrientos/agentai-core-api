@@ -36,7 +36,17 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    if (UsesMySql(connectionString))
+    {
+        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 0)));
+    }
+    else
+    {
+        options.UseSqlServer(connectionString);
+    }
+});
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
@@ -135,14 +145,13 @@ if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
 app.Run();
 
 static bool UseInMemoryTickets(IConfiguration configuration)
-{
-    if (configuration.GetValue("Tickets:UseInMemory", false))
-        return true;
+    => configuration.GetValue("Tickets:UseInMemory", false);
 
-    var connectionString = configuration.GetConnectionString("DefaultConnection");
-    return connectionString?.StartsWith("postgres", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("Host=", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("Port=", StringComparison.OrdinalIgnoreCase) == true;
+static bool UsesMySql(string? connectionString)
+{
+    return connectionString?.Contains("Port=", StringComparison.OrdinalIgnoreCase) == true
+        || connectionString?.Contains("SslMode=", StringComparison.OrdinalIgnoreCase) == true
+        || connectionString?.Contains("User ID=", StringComparison.OrdinalIgnoreCase) == true;
 }
 
 internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)

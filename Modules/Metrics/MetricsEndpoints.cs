@@ -12,8 +12,8 @@ public static class MetricsEndpoints
 
             var ingresados  = todos.Count;
             var resueltos   = todos.Count(t => t.State is 4 or 5);      // Resolved, Closed
-            var noResueltos = todos.Count(t => t.State is 1 or 2 or 3); // New, In Progress, On Hold
-            var escalados   = todos.Count(t => t.StateLabel == "In Progress - Escalated");
+            var escalados   = todos.Count(IsEscalated);
+            var noResueltos = todos.Count(t => !IsEscalated(t) && t.State is 1 or 2 or 3); // New, In Progress, On Hold
 
             return Results.Ok(new { ingresados, resueltos, noResueltos, escalados });
         })
@@ -30,7 +30,7 @@ public static class MetricsEndpoints
                 .Select(g => new
                 {
                     modulo = g.Key,
-                    fallas = g.Count(t => t.StateLabel == "In Progress - Escalated")
+                    fallas = g.Count(IsEscalated)
                 })
                 .Where(g => g.fallas > 0)
                 .OrderByDescending(g => g.fallas)
@@ -42,12 +42,13 @@ public static class MetricsEndpoints
                 .Select(g =>
                 {
                     var total     = g.Count();
-                    var fallados  = g.Count(t => t.StateLabel == "In Progress - Escalated");
+                    var fallados  = g.Count(IsEscalated);
                     var tasa      = total == 0 ? 0 : (int)Math.Round(fallados * 100.0 / total);
-                    return new { agente = g.Key, tasa };
+                    return new { agente = g.Key, total, fallas = fallados, tasa };
                 })
-                .Where(g => g.tasa > 0)
+                .Where(g => g.total > 0)
                 .OrderByDescending(g => g.tasa)
+                .ThenByDescending(g => g.fallas)
                 .ToList();
 
             return Results.Ok(new
@@ -67,13 +68,14 @@ public static class MetricsEndpoints
     {
         var t = texto.ToLowerInvariant();
 
+        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
+            t.Contains("password") || t.Contains("sesion") || t.Contains("credencial"))
+            return "Acceso / Login";
         if (t.Contains("turno") || t.Contains("turnera") || t.Contains("reserva"))
             return "Turno / Reserva";
-        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
-            t.Contains("password") || t.Contains("sesion"))
-            return "Acceso / Login";
-        if (t.Contains("pago") || t.Contains("cobro") || t.Contains("tarjeta") ||
-            t.Contains("credito") || t.Contains("debito"))
+        if (t.Contains("pago") || t.Contains("pague") || t.Contains("abone") ||
+            t.Contains("me dieron") || t.Contains("me cargaron") || t.Contains("menos clases") ||
+            t.Contains("cobro") || t.Contains("tarjeta") || t.Contains("credito") || t.Contains("debito"))
             return "Pagos";
         if (t.Contains("pedido") || t.Contains("orden") || t.Contains("ord-"))
             return "Pedidos";
@@ -90,13 +92,14 @@ public static class MetricsEndpoints
     {
         var t = texto.ToLowerInvariant();
 
+        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
+            t.Contains("password") || t.Contains("sesion") || t.Contains("credencial"))
+            return "Subag. Acceso";
         if (t.Contains("turno") || t.Contains("turnera") || t.Contains("reserva"))
             return "Subag. Turno";
-        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
-            t.Contains("password") || t.Contains("sesion"))
-            return "Subag. Acceso";
-        if (t.Contains("pago") || t.Contains("cobro") || t.Contains("tarjeta") ||
-            t.Contains("credito") || t.Contains("debito"))
+        if (t.Contains("pago") || t.Contains("pague") || t.Contains("abone") ||
+            t.Contains("me dieron") || t.Contains("me cargaron") || t.Contains("menos clases") ||
+            t.Contains("cobro") || t.Contains("tarjeta") || t.Contains("credito") || t.Contains("debito"))
             return "Subag. Pago";
         if (t.Contains("pedido") || t.Contains("orden") || t.Contains("ord-"))
             return "Subag. Pedido";
@@ -107,4 +110,8 @@ public static class MetricsEndpoints
 
         return "Agente Entrada";
     }
+
+    private static bool IsEscalated(Ticket ticket)
+        => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase) ||
+            ticket.StateLabel.Equals("In Progress - Escalated", StringComparison.OrdinalIgnoreCase);
 }

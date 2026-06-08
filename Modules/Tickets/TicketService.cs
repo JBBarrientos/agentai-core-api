@@ -255,12 +255,21 @@ public class TicketService : ITicketService
         ticket.CreatedByName = incident.CreatedByName;
         ticket.CreatedByEmail = incident.CreatedByEmail;
         ticket.AssignmentGroup = incident.AssignmentGroup;
-        if (string.IsNullOrWhiteSpace(ticket.AffectedSystem))
+        if (ShouldInferAffectedSystem(ticket.AffectedSystem))
             ticket.AffectedSystem = InferAffectedSystem($"{incident.Title} {incident.Description}");
         ticket.OpenedAt = incident.OpenedAt ?? DateTime.UtcNow;
         ticket.UpdatedAt = incident.UpdatedAt ?? DateTime.UtcNow;
         ticket.ResolvedAt = incident.ResolvedAt;
         ticket.LastSyncedAt = DateTime.UtcNow;
+    }
+
+    private static bool ShouldInferAffectedSystem(string? affectedSystem)
+    {
+        if (string.IsNullOrWhiteSpace(affectedSystem))
+            return true;
+
+        var normalized = NormalizeForMatching(affectedSystem);
+        return normalized is "turnera" or "usuarios" or "usuario";
     }
 
     private async Task<string> GenerateTicketNumberAsync(CancellationToken ct)
@@ -295,19 +304,18 @@ public class TicketService : ITicketService
         var normalized = NormalizeForMatching(text);
 
         if (normalized.Contains("pago") ||
+            normalized.Contains("pague") ||
+            normalized.Contains("abone") ||
             normalized.Contains("credito") ||
             normalized.Contains("creditos") ||
+            normalized.Contains("me dieron") ||
+            normalized.Contains("me cargaron") ||
+            normalized.Contains("menos clases") ||
             normalized.Contains("tarjeta") ||
             normalized.Contains("debito") ||
             normalized.Contains("cobro") ||
             normalized.Contains("cargo"))
             return "pagos";
-
-        if (normalized.Contains("turnera") ||
-            normalized.Contains("turno") ||
-            normalized.Contains("reserva") ||
-            normalized.Contains("clase"))
-            return "turnera";
 
         if (normalized.Contains("usuario") ||
             normalized.Contains("login") ||
@@ -317,7 +325,34 @@ public class TicketService : ITicketService
             normalized.Contains("contrasena") ||
             normalized.Contains("password") ||
             normalized.Contains("acceso"))
-            return "usuarios";
+            return "acceso";
+
+        if (normalized.Contains("profesor") ||
+            normalized.Contains("instructor"))
+            return "profesores";
+
+        if (normalized.Contains("cupo") ||
+            normalized.Contains("cupos") ||
+            normalized.Contains("completo") ||
+            normalized.Contains("disponibilidad") ||
+            normalized.Contains("lugares"))
+            return "disponibilidad";
+
+        if (normalized.Contains("turno") ||
+            normalized.Contains("reserva") ||
+            normalized.Contains("turnera"))
+            return "turnos";
+
+        if (normalized.Contains("clase") ||
+            normalized.Contains("horario") ||
+            normalized.Contains("agenda") ||
+            normalized.Contains("calendario"))
+            return "clases";
+
+        if (normalized.Contains("socio") ||
+            normalized.Contains("perfil") ||
+            normalized.Contains("registrado"))
+            return "socios";
 
         if (normalized.Contains("pedido") || normalized.Contains("ord-"))
             return "pedidos";
@@ -340,8 +375,12 @@ public class TicketService : ITicketService
         var normalized = NormalizeForMatching(value ?? string.Empty);
         return normalized switch
         {
-            "turnera" => "turnera",
-            "usuarios" or "usuario" => "usuarios",
+            "turnera" or "turno" or "turnos" or "reserva" or "reservas" => "turnos",
+            "usuarios" or "usuario" or "acceso" => "acceso",
+            "socios" or "socio" => "socios",
+            "profesores" or "profesor" or "instructor" => "profesores",
+            "disponibilidad" or "cupos" or "cupo" => "disponibilidad",
+            "clases" or "clase" => "clases",
             "pedidos" or "pedido" => "pedidos",
             "pagos" or "pago" => "pagos",
             "catalogo" or "catálogo" => "catalogo",

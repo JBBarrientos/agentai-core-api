@@ -61,7 +61,7 @@ public sealed class AgentActionInvoker : IAgentActionInvoker
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.StandardInput.WriteLineAsync(diagnostic);
+            await process.StandardInput.WriteLineAsync(NormalizeDiagnostic(diagnostic));
             await process.StandardInput.WriteLineAsync("salir");
             process.StandardInput.Close();
 
@@ -164,6 +164,10 @@ public sealed class AgentActionInvoker : IAgentActionInvoker
         {
         }
     }
+
+    private static string NormalizeDiagnostic(string diagnostic)
+        => string.Join(' ', diagnostic
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 }
 
 public sealed record AgentActionResult(bool Success, string Output, string? Error)
