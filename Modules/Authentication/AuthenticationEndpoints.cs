@@ -17,9 +17,14 @@ public static class AuthenticationEndpoints
         });
 
         group.MapPost("/sign-in", async (
+            IConfiguration configuration,
+            IWebHostEnvironment environment,
             AuthenticationService service,
             SignInRequest req) =>
         {
+            if (UseDevelopmentLogin(configuration, environment))
+                return Results.Ok(new SignInResult("dev-dashboard-token", "dev-dashboard-refresh-token"));
+
             var result = await service.SignInAsync(req.Email, req.Password);
             return Results.Ok(result);
         });
@@ -76,4 +81,9 @@ public static class AuthenticationEndpoints
 
         return app;
     }
+
+    private static bool UseDevelopmentLogin(IConfiguration configuration, IWebHostEnvironment environment)
+        => environment.IsDevelopment() &&
+            (configuration.GetValue("Authentication:DevLoginEnabled", false) ||
+             string.IsNullOrWhiteSpace(configuration["Cognito:ClientId"]));
 }

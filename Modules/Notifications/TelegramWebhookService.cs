@@ -8,12 +8,19 @@ using AgentAI.Modules.Messages;
 using AgentAI.Modules.Tickets;
 using AgentAI.Modules.Messages.Dto;
 using AgentAI.Modules.AgentActions;
+using AgentAI.Modules.Tickets.Dto;
+using AgentAI.Modules.AgentRuns;
+using AgentAI.Modules.AgentRuns.Dto;
+using AgentAI.Modules.AgentSteps;
+using AgentAI.Modules.AgentSteps.Dto;
 
 namespace AgentAI.Modules.Notifications;
 
 public sealed partial class TelegramWebhookService : ITelegramWebhookService
 {
     private static readonly ConcurrentDictionary<string, PendingTicketQuestion> PendingQuestions = new();
+    private static readonly ConcurrentDictionary<string, PendingTicketClosure> PendingClosures = new();
+    private static readonly ConcurrentDictionary<string, ActiveTicketFlow> ActiveTicketFlows = new();
     private static readonly ConcurrentDictionary<string, TicketIntakeState> IntakeStates = new();
 
     private readonly IServiceNowConnector _serviceNow;
@@ -24,6 +31,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     private readonly ITicketService _ticketService;
     private readonly IAgentIntakeInvoker _agentIntakeInvoker;
     private readonly IAgentActionInvoker _agentActionInvoker;
+    private readonly IAgentRunService _agentRunService;
+    private readonly IAgentStepService _agentStepService;
     private readonly ILogger<TelegramWebhookService> _logger;
 
     public TelegramWebhookService(
@@ -35,6 +44,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         ITicketService ticketService,
         IAgentIntakeInvoker agentIntakeInvoker,
         IAgentActionInvoker agentActionInvoker,
+        IAgentRunService agentRunService,
+        IAgentStepService agentStepService,
         ILogger<TelegramWebhookService> logger)
     {
         _serviceNow = serviceNow;
@@ -45,6 +56,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         _ticketService = ticketService;
         _agentIntakeInvoker = agentIntakeInvoker;
         _agentActionInvoker = agentActionInvoker;
+        _agentRunService = agentRunService;
+        _agentStepService = agentStepService;
         _logger = logger;
     }
 
@@ -74,6 +87,12 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             return;
         }
 
+        if (PendingClosures.TryGetValue(chatId, out var pendingClosure))
+        {
+            await HandleClosureConfirmationAsync(chatId, pendingClosure, text, ct);
+            return;
+        }
+
         if (PendingQuestions.TryGetValue(chatId, out var pending))
         {
             await HandlePendingAnswerAsync(chatId, pending, text, ct);
@@ -87,12 +106,24 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             return;
         }
 
+        if (ActiveTicketFlows.TryGetValue(chatId, out var activeFlow) &&
+            !activeFlow.Number.Equals(ticketNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            await _messageSender.SendToChatAsync(
+                chatId,
+                $"Todavia tengo en curso el ticket {activeFlow.Number}. Primero cerremos ese flujo: responde la informacion pendiente, SI para cerrar, o NO si sigue fallando. Despues vemos {ticketNumber}.",
+                ct: ct);
+            return;
+        }
+
         try
         {
             var incident = await _serviceNow.GetIncidentByNumberAsync(ticketNumber, ct);
             var response = incident is null
                 ? $"No encontre el ticket {ticketNumber}. Verifica el numero e intenta nuevamente."
-                : await BuildNextStepAsync(chatId, incident, ct);
+                : ShouldOnlyReportStatus(incident)
+                    ? BuildStatusOnlyResponse(incident)
+                    : await BuildNextStepAsync(chatId, incident, ct);
 
             var result = await _messageSender.SendToChatAsync(chatId, response, ct: ct);
             _logger.LogInformation(
@@ -109,6 +140,78 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         }
     }
 
+    private async Task HandleClosureConfirmationAsync(
+        string chatId,
+        PendingTicketClosure pending,
+        string answer,
+        CancellationToken ct)
+    {
+        var normalized = NormalizeForMatching(answer);
+
+        if (IsPositiveConfirmation(normalized))
+        {
+            try
+            {
+                var closeNotes = $"Usuario confirmo por Telegram que el ticket {pending.Number} quedo resuelto. {pending.Summary}";
+                var workNote = $"AgentAI cierra {pending.Number} despues de confirmacion explicita del usuario por Telegram.";
+                await _serviceNow.ResolveIncidentAsync(pending.SysId, closeNotes, workNote, ct: ct);
+                PendingClosures.TryRemove(chatId, out _);
+                ActiveTicketFlows.TryRemove(chatId, out _);
+                IntakeStates.TryRemove(chatId, out _);
+                await _messageSender.SendToChatAsync(chatId, $"Gracias por confirmar. Cerre el ticket {pending.Number} como resuelto.", ct: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Could not close ticket {TicketNumber} after Telegram confirmation.", pending.Number);
+                await _messageSender.SendToChatAsync(chatId, $"Recibi tu confirmacion, pero no pude cerrar el ticket {pending.Number} en ServiceNow. Intenta nuevamente mas tarde.", ct: ct);
+            }
+
+            return;
+        }
+
+        if (IsNegativeConfirmation(normalized))
+        {
+            var escalated = false;
+            var reason = $"El usuario indico por Telegram que el problema del ticket {pending.Number} persiste despues de la accion automatica. Se deriva a soporte especializado.";
+            try
+            {
+                var customerMessage = "Indicaste por Telegram que el problema sigue. Derivamos el ticket a soporte especializado para seguimiento.";
+                var assignmentGroupSysId = _configuration["ServiceNow:EscalationAssignmentGroupSysId"];
+
+                if (string.IsNullOrWhiteSpace(assignmentGroupSysId))
+                {
+                    await _serviceNow.MarkInProgressAsync(pending.SysId, reason, customerMessage, ct);
+                }
+                else
+                {
+                    await _serviceNow.EscalateIncidentAsync(
+                        pending.SysId,
+                        assignmentGroupSysId,
+                        reason,
+                        customerMessage,
+                        ct);
+                    escalated = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not write negative closure confirmation for ticket {TicketNumber}.", pending.Number);
+            }
+
+            PendingClosures.TryRemove(chatId, out _);
+            ActiveTicketFlows.TryRemove(chatId, out _);
+            await _messageSender.SendToChatAsync(
+                chatId,
+                escalated
+                    ? $"Entendido. Derive el ticket {pending.Number} a soporte especializado para que revisen el caso."
+                    : $"Entendido. Dejo el ticket {pending.Number} abierto para seguimiento, pero no pude asignarlo automaticamente al grupo especializado.",
+                ct: ct);
+            return;
+        }
+
+        await _messageSender.SendToChatAsync(chatId, $"Tengo pendiente confirmar si el ticket {pending.Number} quedo resuelto. Respondeme SI para cerrarlo o NO si el problema sigue.", ct: ct);
+    }
+
     private async Task HandlePendingAnswerAsync(
         string chatId,
         PendingTicketQuestion pending,
@@ -121,6 +224,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             if (incident is not null && IsFinalState(incident))
             {
                 PendingQuestions.TryRemove(chatId, out _);
+                PendingClosures.TryRemove(chatId, out _);
+                ActiveTicketFlows.TryRemove(chatId, out _);
                 IntakeStates.TryRemove(chatId, out _);
                 await _messageSender.SendToChatAsync(chatId, BuildFinalStateResponse(incident), ct: ct);
                 return;
@@ -211,6 +316,8 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         if (IsFinalState(incident))
         {
             PendingQuestions.TryRemove(chatId, out _);
+            PendingClosures.TryRemove(chatId, out _);
+            ActiveTicketFlows.TryRemove(chatId, out _);
             IntakeStates.TryRemove(chatId, out _);
             return BuildFinalStateResponse(incident);
         }
@@ -239,20 +346,39 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             _logger.LogWarning(ex, "Could not persist Telegram conversation for ticket {TicketNumber}. Continuing with analysis.", incident.Number);
         }
 
-        return await AnalyzeAndRouteAsync(chatId, incident, ct);
+        return await AnalyzeAndRouteAsync(chatId, incident, ticket.Id, ct);
     }
 
-    private async Task<string> AnalyzeAndRouteAsync(string chatId, ServiceNowIncident incident, CancellationToken ct)
+    private async Task<string> AnalyzeAndRouteAsync(string chatId, ServiceNowIncident incident, int ticketId, CancellationToken ct)
     {
+        ActiveTicketFlows[chatId] = new ActiveTicketFlow(incident.Number, incident.SysId);
+        var run = await _agentRunService.CreateAsync(new CreateAgentRunRequest(ticketId), ct);
         var intakeResult = await _agentIntakeInvoker.AnalyzeAsync(incident, ct);
+        var intakeStepStatus = intakeResult.Succeeded && intakeResult.Decision is not null
+            ? (intakeResult.Decision.Decision.Equals("escalar", StringComparison.OrdinalIgnoreCase) ? "failed" : "completed")
+            : "failed";
+        await RecordAgentStepAsync(
+            run.Id,
+            "AgenteEntrada",
+            $"{incident.Number} | {incident.Title}",
+            "Analizar ticket, sistema afectado y KB",
+            intakeStepStatus,
+            intakeResult.Succeeded
+                ? intakeResult.Output
+                : intakeResult.Error ?? "AgenteEntrada fallo sin detalle.",
+            ct);
+
         if (!intakeResult.Succeeded || intakeResult.Decision is null)
         {
             var error = intakeResult.Error ?? "AgenteEntrada no devolvio una decision valida.";
             _logger.LogWarning("AgenteEntrada failed for ticket {TicketNumber}. Error={Error}", incident.Number, error);
+            await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
             return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: No pude ejecutar AgenteEntrada para validar el caso con KB. Detalle: {error}";
         }
 
         var decision = intakeResult.Decision;
+        await PersistAffectedSystemAsync(incident.SysId, decision.System, ct);
+
         if (decision.Decision.Equals("pedir_info", StringComparison.OrdinalIgnoreCase))
         {
             var missingField = ParseMissingField(decision.MissingField);
@@ -260,6 +386,20 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: AgenteEntrada pidio informacion, pero no indico que campo falta.";
 
             PendingQuestions[chatId] = new PendingTicketQuestion(incident.Number, incident.SysId, missingField.Value);
+            try
+            {
+                await _serviceNow.MarkOnHoldAsync(
+                    incident.SysId,
+                    $"AgentAI dejo {incident.Number} en espera porque necesita informacion del usuario por Telegram. Campo requerido: {missingField.Value}.",
+                    "Necesitamos una informacion adicional para continuar con el analisis automatico del ticket.",
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not mark ticket {TicketNumber} as On Hold while waiting for missing information.", incident.Number);
+            }
+
+            await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
             return string.IsNullOrWhiteSpace(decision.Question)
                 ? BuildMissingFieldQuestion(incident.Number, missingField.Value)
                 : decision.Question;
@@ -306,6 +446,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             response.AppendLine(updatedServiceNow
                 ? "El ticket fue derivado a soporte especializado."
                 : "No pude actualizar ServiceNow con la escalacion, pero la decision es escalar.");
+            ActiveTicketFlows.TryRemove(chatId, out _);
+            PendingClosures.TryRemove(chatId, out _);
+            PendingQuestions.TryRemove(chatId, out _);
+            await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
             return response.ToString().Trim();
         }
 
@@ -348,22 +492,124 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             {
                 builder.AppendLine();
                 builder.AppendLine("Me falta el email registrado en la turnera para ejecutar el agente de acceso.");
+                await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
                 return builder.ToString().Trim();
             }
 
             var agent = string.IsNullOrWhiteSpace(decision.Agent) ? "AgenteAccionAcceso" : decision.Agent;
             var action = string.IsNullOrWhiteSpace(decision.Action) ? "resetear_acceso" : decision.Action;
-            var diagnostic = $"DELEGAR_A: {agent} | TICKET: {incident.Number} | ACCION: {action} | USUARIO: {email}";
+            var detail = Truncate($"{incident.Title} {incident.Description}".Trim(), 1000);
+            var diagnostic = $"DELEGAR_A: {agent} | TICKET: {incident.Number} | ACCION: {action} | USUARIO: {email} | DETALLE: {detail}";
             var actionResult = await _agentActionInvoker.ExecuteAsync(diagnostic, ct);
+            await RecordAgentStepAsync(
+                run.Id,
+                agent,
+                diagnostic,
+                $"Ejecutar accion {action}",
+                actionResult.Success ? "completed" : "failed",
+                actionResult.Success
+                    ? actionResult.Output
+                    : actionResult.Error ?? "AgenteAccion fallo sin detalle.",
+                ct);
 
             builder.AppendLine();
             builder.AppendLine("Ejecucion del agente:");
-            builder.AppendLine(actionResult.Success
+            var agentSummary = actionResult.Success
                 ? ExtractAgentSummary(actionResult.Output)
-                : $"No pude ejecutar AgenteAccion. Motivo: {actionResult.Error}");
+                : $"No pude ejecutar AgenteAccion. Motivo: {actionResult.Error}";
+            builder.AppendLine(agentSummary);
+
+            if (actionResult.Success && ShouldAskForClosureConfirmation(agentSummary))
+            {
+                PendingClosures[chatId] = new PendingTicketClosure(incident.Number, incident.SysId, agentSummary);
+
+                try
+                {
+                    await _serviceNow.MarkOnHoldAsync(
+                        incident.SysId,
+                        $"AgentAI ejecuto la accion automatica para {incident.Number}. Queda esperando confirmacion del usuario por Telegram antes de cerrar.",
+                        "Ejecutamos una accion automatica sobre tu caso. Queda pendiente tu confirmacion por Telegram para cerrar el ticket.",
+                        ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not write pending closure note for ticket {TicketNumber}.", incident.Number);
+                }
+
+                builder.AppendLine();
+                builder.AppendLine("Pudiste resolver el problema? Respondeme SI para cerrar el ticket o NO si sigue fallando.");
+            }
         }
 
+        if (!PendingClosures.ContainsKey(chatId) && !PendingQuestions.ContainsKey(chatId))
+            ActiveTicketFlows.TryRemove(chatId, out _);
+
+        await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
         return builder.ToString().Trim();
+    }
+
+    private async Task RecordAgentStepAsync(
+        int runId,
+        string agentType,
+        string input,
+        string prompt,
+        string status,
+        string output,
+        CancellationToken ct)
+    {
+        try
+        {
+            var step = await _agentStepService.CreateAsync(new CreateAgentStepRequest(
+                AgentRunId: runId,
+                AgentType: agentType,
+                InputData: Truncate(input, 2000),
+                Prompt: Truncate(prompt, 1000)), ct);
+
+            await _agentStepService.UpdateAsync(step.Id, new UpdateAgentStepRequest(
+                Status: status,
+                OutputData: Truncate(output, 4000)), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist agent step for run {RunId} and agent {AgentType}.", runId, agentType);
+        }
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private async Task PersistAffectedSystemAsync(string sysId, string? system, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(system))
+            return;
+
+        try
+        {
+            var ticket = await _ticketService.GetBySysIdAsync(sysId, ct);
+            if (ticket is null)
+                return;
+
+            await _ticketService.UpdateAsync(ticket.Id, new UpdateTicketRequest(
+                Title: null,
+                Description: null,
+                State: null,
+                StateLabel: null,
+                Priority: null,
+                PriorityLabel: null,
+                AssignedTo: null,
+                AssignmentGroup: null,
+                AffectedSystem: system,
+                ResolvedAt: null), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist affected system for ticket sys_id {SysId}.", sysId);
+        }
     }
 
     private static TicketIntakeState GetOrCreateIntakeState(string chatId, ServiceNowIncident incident)
@@ -646,7 +892,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         => field switch
         {
             MissingTicketField.Description => $"Encontre el ticket {ticketNumber}, pero falta una descripcion clara. Contame que problema tenes y que estabas intentando hacer.",
-            MissingTicketField.System => $"Encontre el ticket {ticketNumber}. Para derivarlo bien, decime que sistema esta afectado: usuarios, pedidos, pagos, catalogo o stock.",
+            MissingTicketField.System => $"Encontre el ticket {ticketNumber}. Para derivarlo bien, decime que modulo esta afectado: acceso, socios, turnos, profesores, pagos, disponibilidad o clases.",
             MissingTicketField.Email => $"Encontre el ticket {ticketNumber}. Para operar sobre tu usuario de la turnera, decime el email con el que estas registrado.",
             _ => $"Encontre el ticket {ticketNumber}. Me falta un dato mas para poder derivarlo."
         };
@@ -672,17 +918,88 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             incident.StateLabel.Equals("Canceled", StringComparison.OrdinalIgnoreCase) ||
             incident.ResolvedAt is not null;
 
-    private static string BuildFinalStateResponse(ServiceNowIncident incident)
+    private bool ShouldOnlyReportStatus(ServiceNowIncident incident)
+        => IsFinalState(incident) || IsEscalatedToSecondLevel(incident);
+
+    private bool IsEscalatedToSecondLevel(ServiceNowIncident incident)
+    {
+        var expectedGroup = _configuration["Metrics:EscalatedAssignmentGroup"] ?? "Soporte Nivel 2";
+        return !string.IsNullOrWhiteSpace(incident.AssignmentGroup) &&
+            !string.IsNullOrWhiteSpace(expectedGroup) &&
+            NormalizeForMatching(incident.AssignmentGroup).Equals(NormalizeForMatching(expectedGroup), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string BuildStatusOnlyResponse(ServiceNowIncident incident)
     {
         var builder = new StringBuilder();
         builder.AppendLine(BuildTicketSummary(incident));
         builder.AppendLine();
-        builder.AppendLine("Este ticket ya esta finalizado. No voy a iniciar nuevamente el flujo automatico ni ejecutar acciones sobre la turnera.");
+
+        if (IsEscalatedToSecondLevel(incident))
+        {
+            builder.AppendLine($"Este ticket ya fue derivado a {incident.AssignmentGroup}. No voy a iniciar nuevamente el flujo automatico ni ejecutar acciones sobre la turnera.");
+        }
+        else
+        {
+            builder.AppendLine("Este ticket ya esta finalizado. No voy a iniciar nuevamente el flujo automatico ni ejecutar acciones sobre la turnera.");
+        }
 
         if (incident.ResolvedAt is not null)
             builder.AppendLine($"Fecha de resolucion: {incident.ResolvedAt:yyyy-MM-dd HH:mm} UTC");
 
         return builder.ToString().Trim();
+    }
+
+    private static bool ShouldAskForClosureConfirmation(string agentSummary)
+    {
+        var normalized = NormalizeForMatching(agentSummary);
+        return !normalized.Contains("no pude") &&
+            !normalized.Contains("requiere") &&
+            !normalized.Contains("no hay pagos registrados") &&
+            !normalized.Contains("no tiene creditos disponibles") &&
+            !normalized.Contains("faltan datos");
+    }
+
+    private static bool IsPositiveConfirmation(string normalized)
+    {
+        if (normalized is "si" or "s" or "ok")
+            return true;
+
+        var positives = new[]
+        {
+            "confirmo",
+            "resuelto",
+            "funciono",
+            "ya pude",
+            "pude entrar",
+            "pude ingresar",
+            "solucionado"
+        };
+
+        return positives.Any(normalized.Contains);
+    }
+
+    private static bool IsNegativeConfirmation(string normalized)
+    {
+        var negatives = new[]
+        {
+            "no",
+            "nop",
+            "sigue",
+            "no funciona",
+            "fallo",
+            "no pude",
+            "sigue fallando",
+            "no se resolvio",
+            "persiste"
+        };
+
+        return negatives.Any(value => normalized.Equals(value, StringComparison.OrdinalIgnoreCase) || normalized.Contains(value));
+    }
+
+    private string BuildFinalStateResponse(ServiceNowIncident incident)
+    {
+        return BuildStatusOnlyResponse(incident);
     }
 
     private static string? ExtractTicketNumber(string text)
@@ -729,6 +1046,15 @@ public sealed record PendingTicketQuestion(
     string Number,
     string SysId,
     MissingTicketField Field);
+
+public sealed record PendingTicketClosure(
+    string Number,
+    string SysId,
+    string Summary);
+
+public sealed record ActiveTicketFlow(
+    string Number,
+    string SysId);
 
 public enum MissingTicketField
 {

@@ -13,6 +13,7 @@ public sealed record ServiceNowIncident(
     string PriorityLabel,
     string CreatedByName,
     string CreatedByEmail,
+    string AssignmentGroup,
     DateTime? OpenedAt,
     DateTime? UpdatedAt,
     DateTime? ResolvedAt
@@ -22,6 +23,11 @@ public sealed record ServiceNowUser(
     string SysId,
     string Name,
     string Email
+);
+
+public sealed record ServiceNowGroup(
+    string SysId,
+    string Name
 );
 
 public sealed record ServiceNowTokenResponse(

@@ -15,7 +15,9 @@ public interface ITicketService
     Task ProcessAsync(int ticketId, CancellationToken ct = default);
     Task<Ticket?> GetByNumberAsync(string number, CancellationToken ct = default);
     Task<IEnumerable<ServiceNowTicketResponse>> GetFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default);
+    Task<IEnumerable<ServiceNowTicketResponse>> GetAllFromServiceNowAsync(int pageSize = 100, int maxPages = 50, string? query = null, CancellationToken ct = default);
     Task<IEnumerable<Ticket>> SyncFromServiceNowAsync(int limit = 20, string? query = null, CancellationToken ct = default);
+    Task<IEnumerable<Ticket>> SyncAllFromServiceNowAsync(int pageSize = 100, int maxPages = 50, string? query = null, CancellationToken ct = default);
     Task<Ticket> SyncIncidentAsync(ServiceNowIncident incident, CancellationToken ct = default);
     Task<Ticket> CreateFromAgentAsync(CreateAgentTicketRequest request, CancellationToken ct = default);
 }
