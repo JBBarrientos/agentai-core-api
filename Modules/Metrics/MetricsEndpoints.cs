@@ -1,5 +1,4 @@
-using AgentAI.Data;
-using Microsoft.EntityFrameworkCore;
+using AgentAI.Modules.Tickets;
 
 namespace AgentAI.Modules.Metrics;
 
@@ -7,150 +6,105 @@ public static class MetricsEndpoints
 {
     public static IEndpointRouteBuilder MapMetricsEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/metricas", async (AppDbContext db, IConfiguration configuration, CancellationToken ct) =>
+        app.MapGet("/metricas", async (ITicketRepository repository, CancellationToken ct) =>
         {
-            var escalatedAssignmentGroup = GetEscalatedAssignmentGroup(configuration);
-            var tickets = await db.Tickets
-                .AsNoTracking()
-                .Select(ticket => new TicketMetricRow(ticket.State, ticket.StateLabel, ticket.AssignmentGroup))
-                .ToListAsync(ct);
+            var todos = (await repository.GetAllAsync(ct)).ToList();
 
-            var escalados = tickets.Count(ticket => IsEscalated(ticket, escalatedAssignmentGroup));
-            var resueltos = tickets.Count(ticket => ticket.State is 4 or 5 || IsState(ticket.StateLabel, "Resolved") || IsState(ticket.StateLabel, "Closed"));
-            var noResueltos = tickets.Count(ticket =>
-                !IsEscalated(ticket, escalatedAssignmentGroup) &&
-                (ticket.State is 1 or 2 or 3 || IsState(ticket.StateLabel, "New") || IsState(ticket.StateLabel, "In Progress") || IsState(ticket.StateLabel, "On Hold")));
+            var ingresados  = todos.Count;
+            var resueltos   = todos.Count(t => t.State is 4 or 5);      // Resolved, Closed
+            var noResueltos = todos.Count(t => t.State is 1 or 2 or 3); // New, In Progress, On Hold
+            var escalados   = todos.Count(t => t.StateLabel == "In Progress - Escalated");
 
-            return Results.Ok(new
-            {
-                ingresados = tickets.Count,
-                resueltos,
-                noResueltos,
-                escalados
-            });
+            return Results.Ok(new { ingresados, resueltos, noResueltos, escalados });
         })
+        .WithTags("Metrics")
         .AllowAnonymous();
 
-        app.MapGet("/metricas/calidad", async (AppDbContext db, IConfiguration configuration, CancellationToken ct) =>
+        app.MapGet("/metricas/calidad", async (ITicketRepository repository, CancellationToken ct) =>
         {
-            var escalatedAssignmentGroup = GetEscalatedAssignmentGroup(configuration);
-            var escalationCountsAsAgentFailure = configuration.GetValue("Metrics:EscalationCountsAsAgentFailure", true);
-            var escalationOwnerAgent = configuration["Metrics:EscalationOwnerAgent"] ?? string.Empty;
+            var todos = (await repository.GetAllAsync(ct)).ToList();
 
-            var ticketsBySystem = await db.Tickets
-                .AsNoTracking()
-                .GroupBy(ticket => string.IsNullOrWhiteSpace(ticket.AffectedSystem) ? "sin clasificar" : ticket.AffectedSystem)
-                .Select(group => new
+            // Agrupa tickets por módulo detectado del título
+            var porModulo = todos
+                .GroupBy(t => DetectarModulo(t.Title + " " + t.Description))
+                .Select(g => new
                 {
-                    modulo = group.Key,
-                    fallas = group.Count()
+                    modulo = g.Key,
+                    fallas = g.Count(t => t.StateLabel == "In Progress - Escalated")
                 })
-                .OrderByDescending(item => item.fallas)
-                .ToListAsync(ct);
+                .Where(g => g.fallas > 0)
+                .OrderByDescending(g => g.fallas)
+                .ToList();
 
-            var failedSteps = await db.AgentSteps
-                .AsNoTracking()
-                .Where(step => step.Status.ToLower() == "failed" || step.Status.ToLower() == "error")
-                .GroupBy(step => step.AgentType)
-                .Select(group => new
+            // Tasa de error por agente: escalados / total del módulo * 100
+            var porAgente = todos
+                .GroupBy(t => DetectarAgente(t.Title + " " + t.Description))
+                .Select(g =>
                 {
-                    modulo = string.IsNullOrWhiteSpace(group.Key) ? "Sin agente" : group.Key,
-                    fallas = group.Count()
+                    var total     = g.Count();
+                    var fallados  = g.Count(t => t.StateLabel == "In Progress - Escalated");
+                    var tasa      = total == 0 ? 0 : (int)Math.Round(fallados * 100.0 / total);
+                    return new { agente = g.Key, tasa };
                 })
-                .OrderByDescending(item => item.fallas)
-                .ToListAsync(ct);
-
-            var canAttributeEscalations = escalationCountsAsAgentFailure &&
-                !string.IsNullOrWhiteSpace(escalatedAssignmentGroup) &&
-                !string.IsNullOrWhiteSpace(escalationOwnerAgent);
-
-            var escalatedTickets = canAttributeEscalations
-                ? await db.Tickets
-                    .AsNoTracking()
-                    .CountAsync(ticket => ticket.AssignmentGroup == escalatedAssignmentGroup, ct)
-                : 0;
-
-            var escalatedTicketsWithEntradaStep = canAttributeEscalations
-                ? await db.AgentSteps
-                    .AsNoTracking()
-                    .Where(step =>
-                        step.AgentType == escalationOwnerAgent &&
-                        step.AgentRun.Ticket.AssignmentGroup == escalatedAssignmentGroup)
-                    .Select(step => step.AgentRun.TicketId)
-                    .Distinct()
-                    .CountAsync(ct)
-                : 0;
-
-            var totalStepsByAgent = await db.AgentSteps
-                .AsNoTracking()
-                .GroupBy(step => step.AgentType)
-                .Select(group => new
-                {
-                    AgentType = group.Key,
-                    Total = group.Count()
-                })
-                .ToListAsync(ct);
-
-            var failedByAgent = failedSteps.ToDictionary(item => item.modulo, item => item.fallas, StringComparer.OrdinalIgnoreCase);
-            if (canAttributeEscalations && escalatedTickets > 0)
-                failedByAgent[escalationOwnerAgent] = failedByAgent.GetValueOrDefault(escalationOwnerAgent) + escalatedTickets;
-
-            var totalByAgent = totalStepsByAgent.ToDictionary(
-                item => string.IsNullOrWhiteSpace(item.AgentType) ? "Sin agente" : item.AgentType,
-                item => item.Total,
-                StringComparer.OrdinalIgnoreCase);
-
-            var escalatedWithoutEntradaStep = Math.Max(escalatedTickets - escalatedTicketsWithEntradaStep, 0);
-            if (canAttributeEscalations && escalatedWithoutEntradaStep > 0)
-                totalByAgent[escalationOwnerAgent] = totalByAgent.GetValueOrDefault(escalationOwnerAgent) + escalatedWithoutEntradaStep;
-
-            var errorPorAgente = totalStepsByAgent
-                .Select(item => string.IsNullOrWhiteSpace(item.AgentType) ? "Sin agente" : item.AgentType)
-                .Concat(failedByAgent.Keys)
-                .Concat(totalByAgent.Keys)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(agent =>
-                {
-                    failedByAgent.TryGetValue(agent, out var failures);
-                    totalByAgent.TryGetValue(agent, out var total);
-                    return new
-                    {
-                        agente = agent,
-                        total,
-                        fallas = failures,
-                        exitos = Math.Max(total - failures, 0),
-                        tasa = total == 0 ? 0 : Math.Round((double)failures / total * 100, 2)
-                    };
-                })
-                .OrderByDescending(item => item.tasa)
-                .ThenByDescending(item => item.total)
+                .Where(g => g.tasa > 0)
+                .OrderByDescending(g => g.tasa)
                 .ToList();
 
             return Results.Ok(new
             {
-                fallasPorModulo = ticketsBySystem,
-                fallasPorAgente = failedSteps,
-                errorPorAgente
+                fallasPorModulo = porModulo,
+                errorPorAgente  = porAgente
             });
         })
+        .WithTags("Metrics")
         .AllowAnonymous();
 
         return app;
     }
 
-    private static bool IsEscalated(TicketMetricRow ticket, string escalatedAssignmentGroup)
-        => IsAssignmentGroup(ticket.AssignmentGroup, escalatedAssignmentGroup);
+    // Detecta el módulo (nombre amigable) a partir del texto del ticket
+    private static string DetectarModulo(string texto)
+    {
+        var t = texto.ToLowerInvariant();
 
-    private static string GetEscalatedAssignmentGroup(IConfiguration configuration)
-        => configuration["Metrics:EscalatedAssignmentGroup"]
-            ?? configuration["ServiceNow:EscalationAssignmentGroupName"]
-            ?? string.Empty;
+        if (t.Contains("turno") || t.Contains("turnera") || t.Contains("reserva"))
+            return "Turno / Reserva";
+        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
+            t.Contains("password") || t.Contains("sesion"))
+            return "Acceso / Login";
+        if (t.Contains("pago") || t.Contains("cobro") || t.Contains("tarjeta") ||
+            t.Contains("credito") || t.Contains("debito"))
+            return "Pagos";
+        if (t.Contains("pedido") || t.Contains("orden") || t.Contains("ord-"))
+            return "Pedidos";
+        if (t.Contains("catalogo") || t.Contains("precio"))
+            return "Catálogo / Precio";
+        if (t.Contains("stock") || t.Contains("inventario"))
+            return "Stock";
 
-    private static bool IsState(string? actual, string expected)
-        => actual?.Equals(expected, StringComparison.OrdinalIgnoreCase) == true;
+        return "Otros";
+    }
 
-    private static bool IsAssignmentGroup(string? actual, string expected)
-        => actual?.Equals(expected, StringComparison.OrdinalIgnoreCase) == true;
+    // Detecta el agente responsable a partir del texto del ticket
+    private static string DetectarAgente(string texto)
+    {
+        var t = texto.ToLowerInvariant();
 
-    private sealed record TicketMetricRow(int State, string StateLabel, string? AssignmentGroup);
+        if (t.Contains("turno") || t.Contains("turnera") || t.Contains("reserva"))
+            return "Subag. Turno";
+        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
+            t.Contains("password") || t.Contains("sesion"))
+            return "Subag. Acceso";
+        if (t.Contains("pago") || t.Contains("cobro") || t.Contains("tarjeta") ||
+            t.Contains("credito") || t.Contains("debito"))
+            return "Subag. Pago";
+        if (t.Contains("pedido") || t.Contains("orden") || t.Contains("ord-"))
+            return "Subag. Pedido";
+        if (t.Contains("catalogo") || t.Contains("precio"))
+            return "Subag. Precio";
+        if (t.Contains("stock") || t.Contains("inventario"))
+            return "Subag. Stock";
+
+        return "Agente Entrada";
+    }
 }

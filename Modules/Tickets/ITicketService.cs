@@ -6,6 +6,7 @@ namespace AgentAI.Modules.Tickets;
 public interface ITicketService
 {
     Task<IEnumerable<Ticket>> GetAllAsync(CancellationToken ct = default);
+    Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default);
     Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default);
     Task<Ticket?> GetBySysIdAsync(string sysId, CancellationToken ct = default);
     Task<TicketResponse> CreateAsync(CreateTicketRequest request, CancellationToken ct = default);

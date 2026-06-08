@@ -20,6 +20,13 @@ public sealed class InMemoryTicketRepository : ITicketRepository
     public Task<IEnumerable<Ticket>> GetAllAsync(CancellationToken ct = default)
         => Task.FromResult<IEnumerable<Ticket>>(_store.Tickets.Values.OrderBy(ticket => ticket.Id).ToList());
 
+    public Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default)
+        => Task.FromResult<IEnumerable<Ticket>>(
+            _store.Tickets.Values
+                .Where(t => t.StateLabel == "In Progress - Escalated")
+                .OrderByDescending(t => t.UpdatedAt)
+                .ToList());
+
     public Task<Ticket?> GetByIdAsync(int id, CancellationToken ct = default)
     {
         _store.Tickets.TryGetValue(id, out var ticket);

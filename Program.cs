@@ -36,22 +36,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-{
-    var defaultConnection = builder.Configuration.GetConnectionString("DefaultConnection")
-        ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection no esta configurado.");
-
-    options.UseMySql(
-        defaultConnection,
-        ServerVersion.AutoDetect(defaultConnection),
-        mysqlOptions =>
-        {
-            mysqlOptions.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(10),
-                errorNumbersToAdd: null);
-            mysqlOptions.CommandTimeout(60);
-        });
-});
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
@@ -94,7 +79,15 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseGlobalExceptionHandler();
 app.UseCors("AllowAll");
-app.UseAuthentication(); 
+
+// Swagger antes de auth para que no quede bloqueado por la política global
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthModule();
 app.MapNotificationModule();
@@ -108,13 +101,6 @@ app.MapAgentRunModule();
 app.MapAgentStepModule();
 app.MapKbUsageModule();
 app.MapMetricsModule();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
 
 //app.UseHttpsRedirection();
 
@@ -155,7 +141,8 @@ static bool UseInMemoryTickets(IConfiguration configuration)
 
     var connectionString = configuration.GetConnectionString("DefaultConnection");
     return connectionString?.StartsWith("postgres", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("Host=", StringComparison.OrdinalIgnoreCase) == true;
+        || connectionString?.Contains("Host=", StringComparison.OrdinalIgnoreCase) == true
+        || connectionString?.Contains("Port=", StringComparison.OrdinalIgnoreCase) == true;
 }
 
 internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
