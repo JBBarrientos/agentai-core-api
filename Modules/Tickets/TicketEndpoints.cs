@@ -12,29 +12,16 @@ public static class TicketEndpoints
         group.MapGet("/", async (
             string? estado,
             string? prioridad,
+            string? sistema,
             DateOnly? desde,
             DateOnly? hasta,
             ITicketService service,
             CancellationToken ct) =>
         {
             var tickets = await service.GetAllAsync(ct);
-
-            if (!string.IsNullOrWhiteSpace(estado))
-                tickets = tickets.Where(t =>
-                    t.StateLabel.Equals(estado, StringComparison.OrdinalIgnoreCase));
-
-            if (!string.IsNullOrWhiteSpace(prioridad))
-                tickets = tickets.Where(t =>
-                    t.PriorityLabel.Equals(prioridad, StringComparison.OrdinalIgnoreCase));
-
-            if (desde.HasValue)
-                tickets = tickets.Where(t => DateOnly.FromDateTime(t.OpenedAt) >= desde.Value);
-
-            if (hasta.HasValue)
-                tickets = tickets.Where(t => DateOnly.FromDateTime(t.OpenedAt) <= hasta.Value);
-
-            return Results.Ok(tickets);
-        });
+            return Results.Ok(FilterTickets(tickets, estado, prioridad, sistema, desde, hasta));
+        })
+        .AllowAnonymous();
 
         group.MapGet("/escalados", async (ITicketService service, CancellationToken ct) =>
             Results.Ok(await service.GetEscaladosAsync(ct)))
@@ -126,7 +113,7 @@ public static class TicketEndpoints
             query = query.Where(ticket => ticket.PriorityLabel.Equals(prioridad, StringComparison.OrdinalIgnoreCase));
 
         if (!string.IsNullOrWhiteSpace(sistema) && !sistema.Equals("Todos", StringComparison.OrdinalIgnoreCase))
-            query = query.Where(ticket => ticket.AffectedSystem.Equals(sistema, StringComparison.OrdinalIgnoreCase));
+            query = query.Where(ticket => NormalizeSystem(ticket).Equals(NormalizeSystem(sistema), StringComparison.OrdinalIgnoreCase));
 
         if (desde is not null)
         {
@@ -157,4 +144,67 @@ public static class TicketEndpoints
 
     private static bool IsEscalated(Ticket ticket)
         => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeSystem(string? system)
+    {
+        var normalized = (system ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "turnera" or "turno" or "reserva" or "reservas" => "turnos",
+            "usuarios" or "usuario" => "acceso",
+            _ => normalized
+        };
+    }
+
+    private static string NormalizeSystem(Ticket ticket)
+    {
+        var normalized = NormalizeSystem(ticket.AffectedSystem);
+        if (ticket.AffectedSystem.Equals("turnera", StringComparison.OrdinalIgnoreCase) ||
+            ticket.AffectedSystem.Equals("usuarios", StringComparison.OrdinalIgnoreCase) ||
+            ticket.AffectedSystem.Equals("usuario", StringComparison.OrdinalIgnoreCase))
+        {
+            return InferSystemFromText($"{ticket.Title} {ticket.Description}") ?? normalized;
+        }
+
+        return normalized;
+    }
+
+    private static string? InferSystemFromText(string text)
+    {
+        var normalized = NormalizeText(text);
+
+        if (ContainsAny(normalized, "credencial", "login", "logue", "sesion", "contrasena", "password", "acceso"))
+            return "acceso";
+        if (ContainsAny(normalized, "pago", "pague", "abone", "credito", "creditos", "me dieron", "me cargaron", "menos clases", "tarjeta", "debito", "cobro", "cargo"))
+            return "pagos";
+        if (ContainsAny(normalized, "profesor", "instructor"))
+            return "profesores";
+        if (ContainsAny(normalized, "cupo", "cupos", "completo", "disponibilidad", "lugares"))
+            return "disponibilidad";
+        if (ContainsAny(normalized, "turno", "turnos", "reserva", "reservas", "turnera"))
+            return "turnos";
+        if (ContainsAny(normalized, "clase", "clases", "horario", "agenda", "calendario"))
+            return "clases";
+        if (ContainsAny(normalized, "socio", "perfil", "registrado"))
+            return "socios";
+
+        return null;
+    }
+
+    private static bool ContainsAny(string text, params string[] values)
+        => values.Any(text.Contains);
+
+    private static string NormalizeText(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var builder = new System.Text.StringBuilder(normalized.Length);
+
+        foreach (var character in normalized)
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(character) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                builder.Append(character);
+        }
+
+        return builder.ToString().Normalize(System.Text.NormalizationForm.FormC);
+    }
 }

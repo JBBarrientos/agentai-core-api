@@ -152,9 +152,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         {
             try
             {
-                var closeNotes = $"Usuario confirmo por Telegram que el ticket {pending.Number} quedo resuelto. {pending.Summary}";
+                var closeNotes = BuildTelegramCloseNotes(pending);
                 var workNote = $"AgentAI cierra {pending.Number} despues de confirmacion explicita del usuario por Telegram.";
                 await _serviceNow.ResolveIncidentAsync(pending.SysId, closeNotes, workNote, ct: ct);
+                await MarkLocalTicketResolvedAsync(pending, ct);
                 PendingClosures.TryRemove(chatId, out _);
                 ActiveTicketFlows.TryRemove(chatId, out _);
                 IntakeStates.TryRemove(chatId, out _);
@@ -190,6 +191,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                         reason,
                         customerMessage,
                         ct);
+                    await MarkLocalTicketEscalatedAsync(pending.SysId, reason, ct);
                     escalated = true;
                 }
             }
@@ -258,7 +260,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             var state = IntakeStates.GetOrAdd(
                 chatId,
                 _ => new TicketIntakeState(pending.Number, pending.SysId));
-            state.MarkCollected(pending.Field);
+            state.MarkCollected(pending.Field, answer);
 
             PendingQuestions.TryRemove(chatId, out _);
 
@@ -268,7 +270,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             {
                 try
                 {
-                    response = await BuildNextStepAsync(chatId, enrichedIncident, ct);
+                    response = await BuildNextStepAsync(chatId, state.Enrich(enrichedIncident), ct);
                 }
                 catch (Exception ex)
                 {
@@ -385,6 +387,28 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             if (missingField is null)
                 return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: AgenteEntrada pidio informacion, pero no indico que campo falta.";
 
+            var intakeState = GetOrCreateIntakeState(chatId, incident);
+            if (intakeState.HasCollected(missingField.Value))
+            {
+                var reason = $"AgenteEntrada volvio a pedir {missingField.Value}, pero ese dato ya fue informado por Telegram. Se escala para revision humana.";
+                var serviceNowUpdated = await EscalateInServiceNowAsync(
+                    incident.SysId,
+                    incident.Number,
+                    reason,
+                    $"No pude completar el analisis automatico del ticket {incident.Number}. Lo derivo a soporte especializado para revision.",
+                    ct);
+
+                await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
+                await MarkLocalTicketEscalatedAsync(incident.SysId, reason, ct);
+                PendingQuestions.TryRemove(chatId, out _);
+                PendingClosures.TryRemove(chatId, out _);
+                ActiveTicketFlows.TryRemove(chatId, out _);
+
+                return serviceNowUpdated
+                    ? $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: {reason}\nEl ticket fue derivado a soporte especializado."
+                    : $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: {reason}\nNo pude actualizar ServiceNow con la escalacion, pero la decision es escalar.";
+            }
+
             PendingQuestions[chatId] = new PendingTicketQuestion(incident.Number, incident.SysId, missingField.Value);
             try
             {
@@ -430,6 +454,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                         workNote,
                         customerMessage,
                         ct);
+                    await MarkLocalTicketEscalatedAsync(incident.SysId, reason, ct);
                 }
             }
             catch (Exception ex)
@@ -490,8 +515,9 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             var email = decision.User ?? ExtractEmail(incident);
             if (string.IsNullOrWhiteSpace(email))
             {
+                PendingQuestions[chatId] = new PendingTicketQuestion(incident.Number, incident.SysId, MissingTicketField.Email);
                 builder.AppendLine();
-                builder.AppendLine("Me falta el email registrado en la turnera para ejecutar el agente de acceso.");
+                builder.AppendLine(BuildMissingEmailForActionMessage(incident.Number, decision.Action, decision.Agent));
                 await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("completed"), ct);
                 return builder.ToString().Trim();
             }
@@ -521,7 +547,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
             if (actionResult.Success && ShouldAskForClosureConfirmation(agentSummary))
             {
-                PendingClosures[chatId] = new PendingTicketClosure(incident.Number, incident.SysId, agentSummary);
+                PendingClosures[chatId] = new PendingTicketClosure(
+                    incident.Number,
+                    incident.SysId,
+                    BuildClosureActionSummary(agentSummary));
 
                 try
                 {
@@ -581,6 +610,88 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             return string.Empty;
 
         return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private async Task MarkLocalTicketResolvedAsync(PendingTicketClosure pending, CancellationToken ct)
+    {
+        var ticket = await _ticketService.GetBySysIdAsync(pending.SysId, ct);
+        if (ticket is null)
+            return;
+
+        var resolvedAt = DateTime.UtcNow;
+        await _ticketService.SyncIncidentAsync(new ServiceNowIncident(
+            ticket.SysId,
+            ticket.Number,
+            ticket.Title,
+            ticket.Description,
+            State: 4,
+            StateLabel: "Resolved",
+            ticket.Priority,
+            ticket.PriorityLabel,
+            ticket.CreatedByName,
+            ticket.CreatedByEmail,
+            ticket.AssignmentGroup,
+            ticket.OpenedAt,
+            UpdatedAt: resolvedAt,
+            ResolvedAt: resolvedAt), ct);
+    }
+
+    private async Task<bool> EscalateInServiceNowAsync(
+        string sysId,
+        string ticketNumber,
+        string reason,
+        string customerMessage,
+        CancellationToken ct)
+    {
+        try
+        {
+            var assignmentGroupSysId = _configuration["ServiceNow:EscalationAssignmentGroupSysId"];
+            var workNote = $"AgentAI derivo el ticket {ticketNumber} desde Telegram. Motivo: {reason}";
+
+            if (string.IsNullOrWhiteSpace(assignmentGroupSysId))
+            {
+                await _serviceNow.AddWorkNoteAsync(sysId, workNote, ct);
+                await _serviceNow.AddCustomerCommentAsync(sysId, customerMessage, ct);
+            }
+            else
+            {
+                await _serviceNow.EscalateIncidentAsync(
+                    sysId,
+                    assignmentGroupSysId,
+                    workNote,
+                    customerMessage,
+                    ct);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not escalate ServiceNow ticket {TicketNumber}.", ticketNumber);
+            return false;
+        }
+    }
+
+    private async Task MarkLocalTicketEscalatedAsync(string sysId, string reason, CancellationToken ct)
+    {
+        var ticket = await _ticketService.GetBySysIdAsync(sysId, ct);
+        if (ticket is null)
+            return;
+
+        var escalatedGroup = _configuration["Metrics:EscalatedAssignmentGroup"] ?? "Soporte Nivel 2";
+        await _ticketService.UpdateAsync(ticket.Id, new UpdateTicketRequest(
+            Title: null,
+            Description: string.IsNullOrWhiteSpace(ticket.Description)
+                ? reason
+                : ticket.Description,
+            State: 2,
+            StateLabel: "In Progress",
+            Priority: null,
+            PriorityLabel: null,
+            AssignedTo: null,
+            AssignmentGroup: escalatedGroup,
+            AffectedSystem: null,
+            ResolvedAt: null), ct);
     }
 
     private async Task PersistAffectedSystemAsync(string sysId, string? system, CancellationToken ct)
@@ -680,29 +791,35 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     private static string InferSystem(ServiceNowIncident incident)
     {
         var text = NormalizeForMatching($"{incident.Title} {incident.Description}");
+        var scores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["usuarios"] = ScoreSystem(text,
+                ("credenciales invalidas", 16), ("credencial", 12), ("login", 12), ("iniciar sesion", 12),
+                ("sesion", 10), ("contrasena", 10), ("password", 10), ("acceso", 9), ("usuario", 5)),
+            ["turnera"] = ScoreSystem(text,
+                ("reserva", 10), ("reservas", 10), ("turno", 10), ("turnos", 10), ("turnera", 1)),
+            ["pagos"] = ScoreSystem(text,
+                ("pago", 12), ("pague", 14), ("abone", 14), ("me dieron", 12), ("me cargaron", 12),
+                ("menos clases", 12), ("tarjeta", 7), ("debito", 7), ("cobro", 9), ("cargo", 9), ("credito", 10)),
+            ["pedidos"] = ScoreSystem(text,
+                ("pedido", 10), ("ord-", 10)),
+            ["catalogo"] = ScoreSystem(text,
+                ("catalogo", 10), ("precio", 10)),
+            ["stock"] = ScoreSystem(text,
+                ("stock", 10), ("inventario", 10))
+        };
 
-        if (text.Contains("turnera"))
-            return "turnera";
+        var best = scores
+            .Where(item => item.Value > 0)
+            .OrderByDescending(item => item.Value)
+            .ThenBy(item => item.Key)
+            .FirstOrDefault();
 
-        if (text.Contains("usuario") ||
-            text.Contains("login") ||
-            text.Contains("sesion") ||
-            text.Contains("credencial") ||
-            text.Contains("contrasena") ||
-            text.Contains("password") ||
-            text.Contains("acceso"))
-            return "usuarios";
-        if (text.Contains("pedido") || text.Contains("ord-"))
-            return "pedidos";
-        if (text.Contains("pago") || text.Contains("tarjeta") || text.Contains("debito") || text.Contains("cobro") || text.Contains("cargo"))
-            return "pagos";
-        if (text.Contains("catalogo") || text.Contains("precio"))
-            return "catalogo";
-        if (text.Contains("stock") || text.Contains("inventario"))
-            return "stock";
-
-        return string.Empty;
+        return best.Value >= 6 ? best.Key : string.Empty;
     }
+
+    private static int ScoreSystem(string text, params (string Token, int Weight)[] weightedTokens)
+        => weightedTokens.Where(item => text.Contains(item.Token)).Sum(item => item.Weight);
 
     private static bool ShouldEscalate(
         ServiceNowIncident incident,
@@ -780,6 +897,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
     private static bool ContainsHighRiskSignal(string text)
     {
+        var normalized = NormalizeForMatching(text);
         var signals = new[]
         {
             "fraude",
@@ -794,14 +912,22 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             "tarjeta robada",
             "accedio sin permiso",
             "accedieron sin permiso",
+            "alguien entro a mi cuenta",
+            "entraron a mi cuenta",
+            "ingresaron a mi cuenta",
+            "ingreso a mi cuenta",
+            "sin autorizacion",
+            "sin mi autorizacion",
             "cuenta comprometida",
+            "cuenta hackeada",
+            "me hackearon",
             "hackearon",
             "suplantacion",
             "datos sensibles",
             "denuncia"
         };
 
-        return signals.Any(text.Contains);
+        return signals.Any(normalized.Contains);
     }
 
     private static bool EscalationCriteriaApplies(string text, string escalationCriteria)
@@ -888,6 +1014,54 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         return lines.Count == 0 ? output.Trim() : string.Join(Environment.NewLine, lines.TakeLast(6));
     }
 
+    private static string BuildTelegramCloseNotes(PendingTicketClosure pending)
+    {
+        var summary = string.IsNullOrWhiteSpace(pending.Summary)
+            ? "Accion automatica ejecutada correctamente."
+            : pending.Summary;
+
+        return $"Usuario confirmo por Telegram que el ticket {pending.Number} quedo resuelto. {summary}";
+    }
+
+    private static string BuildClosureActionSummary(string agentSummary)
+    {
+        if (string.IsNullOrWhiteSpace(agentSummary))
+            return "Accion automatica ejecutada correctamente.";
+
+        var lines = agentSummary
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !line.StartsWith("[AgenteAccion]", StringComparison.OrdinalIgnoreCase))
+            .Select(SanitizeClosureLine)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        return lines.Count == 0
+            ? "Accion automatica ejecutada correctamente."
+            : string.Join(" ", lines);
+    }
+
+    private static string SanitizeClosureLine(string line)
+    {
+        var cleaned = Regex.Replace(line, @"^\[[^\]]+\]\s*", string.Empty).Trim();
+        cleaned = Regex.Replace(
+            cleaned,
+            @"Password temporal:\s*\S+\.?",
+            "Password temporal generada.",
+            RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(
+            cleaned,
+            @"\s*No cierro el ticket;?\s*queda pendiente de confirmacion del usuario\.?",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(
+            cleaned,
+            @"\s*Queda pendiente de confirmacion del usuario\.?",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+
+        return cleaned.Trim();
+    }
+
     private static string BuildMissingFieldQuestion(string ticketNumber, MissingTicketField field)
         => field switch
         {
@@ -896,6 +1070,21 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             MissingTicketField.Email => $"Encontre el ticket {ticketNumber}. Para operar sobre tu usuario de la turnera, decime el email con el que estas registrado.",
             _ => $"Encontre el ticket {ticketNumber}. Me falta un dato mas para poder derivarlo."
         };
+
+    private static string BuildMissingEmailForActionMessage(string ticketNumber, string? action, string? agent)
+    {
+        var normalized = NormalizeForMatching($"{action} {agent}");
+        var operation = normalized switch
+        {
+            var text when text.Contains("pago") => "consultar tus pagos y creditos",
+            var text when text.Contains("turno") => "consultar tus turnos",
+            var text when text.Contains("disponibilidad") => "consultar la disponibilidad",
+            var text when text.Contains("acceso") || text.Contains("resetear") => "operar sobre tu usuario de la turnera",
+            _ => "continuar con la accion automatica"
+        };
+
+        return $"Encontre el ticket {ticketNumber}. Para {operation}, decime el email con el que estas registrado.";
+    }
 
     private static MissingTicketField? ParseMissingField(string? field)
     {
@@ -1076,6 +1265,9 @@ public sealed class TicketIntakeState
     public bool HasDescription { get; private set; }
     public bool HasSystem { get; private set; }
     public bool HasEmail { get; private set; }
+    public string? DescriptionAnswer { get; private set; }
+    public string? SystemAnswer { get; private set; }
+    public string? EmailAnswer { get; private set; }
 
     public static TicketIntakeState FromIncident(ServiceNowIncident incident)
     {
@@ -1089,19 +1281,52 @@ public sealed class TicketIntakeState
         return state;
     }
 
-    public void MarkCollected(MissingTicketField field)
+    public void MarkCollected(MissingTicketField field, string answer)
     {
         switch (field)
         {
             case MissingTicketField.Description:
                 HasDescription = true;
+                DescriptionAnswer = answer;
                 break;
             case MissingTicketField.System:
                 HasSystem = true;
+                SystemAnswer = answer;
                 break;
             case MissingTicketField.Email:
                 HasEmail = true;
+                EmailAnswer = answer;
                 break;
         }
     }
+
+    public ServiceNowIncident Enrich(ServiceNowIncident incident)
+    {
+        var details = new List<string>();
+        if (!string.IsNullOrWhiteSpace(DescriptionAnswer))
+            details.Add($"Informacion agregada por Telegram: descripcion del problema: {DescriptionAnswer}");
+        if (!string.IsNullOrWhiteSpace(SystemAnswer))
+            details.Add($"Informacion agregada por Telegram: sistema afectado: {SystemAnswer}");
+        if (!string.IsNullOrWhiteSpace(EmailAnswer))
+            details.Add($"Informacion agregada por Telegram: email/contacto del usuario: {EmailAnswer}");
+
+        if (details.Count == 0)
+            return incident;
+
+        var description = $"{incident.Description}\n\n{string.Join("\n", details)}".Trim();
+        return incident with
+        {
+            Description = description,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    public bool HasCollected(MissingTicketField field)
+        => field switch
+        {
+            MissingTicketField.Description => HasDescription,
+            MissingTicketField.System => HasSystem,
+            MissingTicketField.Email => HasEmail,
+            _ => false
+        };
 }
