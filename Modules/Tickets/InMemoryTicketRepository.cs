@@ -23,7 +23,7 @@ public sealed class InMemoryTicketRepository : ITicketRepository
     public Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default)
         => Task.FromResult<IEnumerable<Ticket>>(
             _store.Tickets.Values
-                .Where(t => t.StateLabel == "In Progress - Escalated")
+                .Where(t => t.StateLabel == "En proceso Nivel 2")
                 .OrderByDescending(t => t.UpdatedAt)
                 .ToList());
 

@@ -112,6 +112,7 @@ public static class MetricsEndpoints
     }
 
     private static bool IsEscalated(Ticket ticket)
-        => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase) ||
-            ticket.StateLabel.Equals("In Progress - Escalated", StringComparison.OrdinalIgnoreCase);
+        => ticket.StateLabel.Equals("En proceso Nivel 2", StringComparison.OrdinalIgnoreCase) ||
+           ticket.StateLabel.Equals("In Progress - Escalated", StringComparison.OrdinalIgnoreCase) ||
+           ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase);
 }

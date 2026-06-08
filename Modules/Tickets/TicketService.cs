@@ -203,7 +203,7 @@ public class TicketService : ITicketService
             Title = $"{req.System}: {req.ErrorType}",
             Description = req.Description,
             State = 1,
-            StateLabel = "New",
+            StateLabel = "Nuevo",
             Priority = 3,
             PriorityLabel = "Moderate",
             CreatedByEmail = req.UserEmail,

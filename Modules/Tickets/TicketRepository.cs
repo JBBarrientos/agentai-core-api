@@ -13,7 +13,7 @@ public class TicketRepository : ITicketRepository
 
     public async Task<IEnumerable<Ticket>> GetEscaladosAsync(CancellationToken ct = default)
         => await _db.Tickets
-            .Where(t => t.StateLabel == "In Progress - Escalated")
+            .Where(t => t.StateLabel == "En proceso Nivel 2")
             .OrderByDescending(t => t.UpdatedAt)
             .ToListAsync(ct);
 

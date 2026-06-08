@@ -417,6 +417,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                     $"AgentAI dejo {incident.Number} en espera porque necesita informacion del usuario por Telegram. Campo requerido: {missingField.Value}.",
                     "Necesitamos una informacion adicional para continuar con el analisis automatico del ticket.",
                     ct);
+                await UpdateLocalTicketStateAsync(incident.SysId, 3, "En espera", ct);
             }
             catch (Exception ex)
             {
@@ -487,6 +488,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         try
         {
             await _serviceNow.MarkInProgressAsync(incident.SysId, continueNote, continueMessage, ct);
+            await UpdateLocalTicketStateAsync(incident.SysId, 2, "En proceso Nivel 1", ct);
         }
         catch (Exception ex)
         {
@@ -559,6 +561,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                         $"AgentAI ejecuto la accion automatica para {incident.Number}. Queda esperando confirmacion del usuario por Telegram antes de cerrar.",
                         "Ejecutamos una accion automatica sobre tu caso. Queda pendiente tu confirmacion por Telegram para cerrar el ticket.",
                         ct);
+                    await UpdateLocalTicketStateAsync(incident.SysId, 3, "En espera", ct);
                 }
                 catch (Exception ex)
                 {
@@ -625,7 +628,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             ticket.Title,
             ticket.Description,
             State: 4,
-            StateLabel: "Resolved",
+            StateLabel: "Resuelto",
             ticket.Priority,
             ticket.PriorityLabel,
             ticket.CreatedByName,
@@ -685,13 +688,39 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 ? reason
                 : ticket.Description,
             State: 2,
-            StateLabel: "In Progress",
+            StateLabel: "En proceso Nivel 2",
             Priority: null,
             PriorityLabel: null,
             AssignedTo: null,
             AssignmentGroup: escalatedGroup,
             AffectedSystem: null,
             ResolvedAt: null), ct);
+    }
+
+    private async Task UpdateLocalTicketStateAsync(string sysId, int state, string stateLabel, CancellationToken ct)
+    {
+        try
+        {
+            var ticket = await _ticketService.GetBySysIdAsync(sysId, ct);
+            if (ticket is null)
+                return;
+
+            await _ticketService.UpdateAsync(ticket.Id, new UpdateTicketRequest(
+                Title: null,
+                Description: null,
+                State: state,
+                StateLabel: stateLabel,
+                Priority: null,
+                PriorityLabel: null,
+                AssignedTo: null,
+                AssignmentGroup: null,
+                AffectedSystem: null,
+                ResolvedAt: null), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not update local ticket state for SysId {SysId} to {StateLabel}.", sysId, stateLabel);
+        }
     }
 
     private async Task PersistAffectedSystemAsync(string sysId, string? system, CancellationToken ct)
