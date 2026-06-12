@@ -38,23 +38,14 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    if (UsesMySql(connectionString))
-    {
-        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 0)));
-    }
-    else
-    {
-        options.UseSqlServer(connectionString);
-    }
+
+    options.UseMySql(
+        connectionString,
+        ServerVersion.AutoDetect(connectionString));
 });
 
 builder.Services.AddHealthModule();
 builder.Services.AddTicketModule();
-if (UseInMemoryTickets(builder.Configuration))
-{
-    builder.Services.AddSingleton<InMemoryTicketStore>();
-    builder.Services.AddScoped<ITicketRepository, InMemoryTicketRepository>();
-}
 builder.Services.AddConversationModule();
 builder.Services.AddAuditLogModule();
 builder.Services.AddAgentRunModule();
@@ -143,16 +134,6 @@ if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
     db.Database.Migrate();
 }
 app.Run();
-
-static bool UseInMemoryTickets(IConfiguration configuration)
-    => configuration.GetValue("Tickets:UseInMemory", false);
-
-static bool UsesMySql(string? connectionString)
-{
-    return connectionString?.Contains("Port=", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("SslMode=", StringComparison.OrdinalIgnoreCase) == true
-        || connectionString?.Contains("User ID=", StringComparison.OrdinalIgnoreCase) == true;
-}
 
 internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 {
