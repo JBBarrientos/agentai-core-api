@@ -15,14 +15,10 @@ public static class AuthenticationModule
 
         services.AddSingleton<IAmazonCognitoIdentityProvider>(_ =>
             new AmazonCognitoIdentityProviderClient(
-                new BasicAWSCredentials(
-                    config["AWS:AccessKeyId"],
-                    config["AWS:SecretAccessKey"]
-                ),
+                new AnonymousAWSCredentials(),
                 RegionEndpoint.GetBySystemName(config["AWS:Region"])
             )
         );
-
         services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
         services.AddScoped<AuthenticationService>();
         services.AddScoped<IUserRepository, UserRepository>();

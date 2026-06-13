@@ -571,7 +571,7 @@ public sealed class ServiceNowConnector : IServiceNowConnector
     private static string MapUrgencyLabel(int urgency) => urgency switch
     {
         1 => "High",
-        2 => "Medium",
+        2 => "Moderate",
         3 => "Low",
         _ => "Unknown"
     };
