@@ -24,9 +24,8 @@ public static class MetricsEndpoints
         {
             var todos = (await repository.GetAllAsync(ct)).ToList();
 
-            // Agrupa tickets por módulo detectado del título
-            var porModulo = todos
-                .GroupBy(t => DetectarModulo(t.Title + " " + t.Description))
+            var fallasPorModulo = todos
+                .GroupBy(t => string.IsNullOrWhiteSpace(t.AffectedSystem) ? "sin clasificar" : t.AffectedSystem)
                 .Select(g => new
                 {
                     modulo = g.Key,
@@ -36,79 +35,12 @@ public static class MetricsEndpoints
                 .OrderByDescending(g => g.fallas)
                 .ToList();
 
-            // Tasa de error por agente: escalados / total del módulo * 100
-            var porAgente = todos
-                .GroupBy(t => DetectarAgente(t.Title + " " + t.Description))
-                .Select(g =>
-                {
-                    var total     = g.Count();
-                    var fallados  = g.Count(IsEscalated);
-                    var tasa      = total == 0 ? 0 : (int)Math.Round(fallados * 100.0 / total);
-                    return new { agente = g.Key, total, fallas = fallados, tasa };
-                })
-                .Where(g => g.total > 0)
-                .OrderByDescending(g => g.tasa)
-                .ThenByDescending(g => g.fallas)
-                .ToList();
-
-            return Results.Ok(new
-            {
-                fallasPorModulo = porModulo,
-                errorPorAgente  = porAgente
-            });
+            return Results.Ok(new { fallasPorModulo });
         })
         .WithTags("Metrics")
         .AllowAnonymous();
 
         return app;
-    }
-
-    // Detecta el módulo (nombre amigable) a partir del texto del ticket
-    private static string DetectarModulo(string texto)
-    {
-        var t = texto.ToLowerInvariant();
-
-        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
-            t.Contains("password") || t.Contains("sesion") || t.Contains("credencial"))
-            return "Acceso / Login";
-        if (t.Contains("turno") || t.Contains("turnera") || t.Contains("reserva"))
-            return "Turno / Reserva";
-        if (t.Contains("pago") || t.Contains("pague") || t.Contains("abone") ||
-            t.Contains("me dieron") || t.Contains("me cargaron") || t.Contains("menos clases") ||
-            t.Contains("cobro") || t.Contains("tarjeta") || t.Contains("credito") || t.Contains("debito"))
-            return "Pagos";
-        if (t.Contains("pedido") || t.Contains("orden") || t.Contains("ord-"))
-            return "Pedidos";
-        if (t.Contains("catalogo") || t.Contains("precio"))
-            return "Catálogo / Precio";
-        if (t.Contains("stock") || t.Contains("inventario"))
-            return "Stock";
-
-        return "Otros";
-    }
-
-    // Detecta el agente responsable a partir del texto del ticket
-    private static string DetectarAgente(string texto)
-    {
-        var t = texto.ToLowerInvariant();
-
-        if (t.Contains("acceso") || t.Contains("login") || t.Contains("contrase") ||
-            t.Contains("password") || t.Contains("sesion") || t.Contains("credencial"))
-            return "Subag. Acceso";
-        if (t.Contains("turno") || t.Contains("turnera") || t.Contains("reserva"))
-            return "Subag. Turno";
-        if (t.Contains("pago") || t.Contains("pague") || t.Contains("abone") ||
-            t.Contains("me dieron") || t.Contains("me cargaron") || t.Contains("menos clases") ||
-            t.Contains("cobro") || t.Contains("tarjeta") || t.Contains("credito") || t.Contains("debito"))
-            return "Subag. Pago";
-        if (t.Contains("pedido") || t.Contains("orden") || t.Contains("ord-"))
-            return "Subag. Pedido";
-        if (t.Contains("catalogo") || t.Contains("precio"))
-            return "Subag. Precio";
-        if (t.Contains("stock") || t.Contains("inventario"))
-            return "Subag. Stock";
-
-        return "Agente Entrada";
     }
 
     private static bool IsEscalated(Ticket ticket)

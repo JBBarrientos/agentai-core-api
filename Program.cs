@@ -57,11 +57,6 @@ builder.Services.AddKnowledgeBaseModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
-builder.Services.Configure<CognitoOptions>(
-    builder.Configuration.GetSection("Cognito"));
-
-builder.Services.AddScoped<AuthenticationService>();
-builder.Services.AddScoped<IAuthenticationProvider, CognitoAuthenticationProvider>();
 builder.Services.AddQueueModule(builder.Configuration, builder.Environment);
 builder.Services.AddServiceNowModule();
 builder.Services.AddScoped<IAgentIntakeInvoker, AgentIntakeInvoker>();

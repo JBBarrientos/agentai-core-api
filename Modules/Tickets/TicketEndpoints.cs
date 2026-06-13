@@ -15,11 +15,12 @@ public static class TicketEndpoints
             string? sistema,
             DateOnly? desde,
             DateOnly? hasta,
+            string? busqueda,
             ITicketService service,
             CancellationToken ct) =>
         {
             var tickets = await service.GetAllAsync(ct);
-            return Results.Ok(FilterTickets(tickets, estado, prioridad, sistema, desde, hasta));
+            return Results.Ok(FilterTickets(tickets, estado, prioridad, sistema, desde, hasta, busqueda));
         })
         .AllowAnonymous();
 
@@ -94,7 +95,8 @@ public static class TicketEndpoints
         string? prioridad,
         string? sistema,
         DateOnly? desde,
-        DateOnly? hasta)
+        DateOnly? hasta,
+        string? busqueda = null)
     {
         var query = tickets;
 
@@ -125,6 +127,16 @@ public static class TicketEndpoints
         {
             var to = hasta.Value.ToDateTime(TimeOnly.MaxValue);
             query = query.Where(ticket => ticket.OpenedAt <= to);
+        }
+
+        if (!string.IsNullOrWhiteSpace(busqueda))
+        {
+            var term = NormalizeText(busqueda);
+            query = query.Where(ticket =>
+                NormalizeText(ticket.Number).Contains(term) ||
+                NormalizeText(ticket.Title).Contains(term) ||
+                NormalizeText(ticket.StateLabel).Contains(term) ||
+                NormalizeText(ticket.PriorityLabel).Contains(term));
         }
 
         return query.OrderByDescending(ticket => ticket.OpenedAt).ToList();

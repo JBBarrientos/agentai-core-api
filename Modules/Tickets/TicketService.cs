@@ -251,7 +251,7 @@ public class TicketService : ITicketService
         ticket.State = incident.State;
         ticket.StateLabel = incident.StateLabel;
         ticket.Priority = incident.Priority;
-        ticket.PriorityLabel = incident.PriorityLabel;
+        ticket.PriorityLabel = NormalizePriorityLabel(incident.PriorityLabel);
         ticket.CreatedByName = incident.CreatedByName;
         ticket.CreatedByEmail = incident.CreatedByEmail;
         ticket.AssignmentGroup = incident.AssignmentGroup;
@@ -262,6 +262,12 @@ public class TicketService : ITicketService
         ticket.ResolvedAt = incident.ResolvedAt;
         ticket.LastSyncedAt = DateTime.UtcNow;
     }
+
+    private static string NormalizePriorityLabel(string? label) => label?.Trim() switch
+    {
+        "Medium" => "Moderate",
+        var l => l ?? string.Empty
+    };
 
     private static bool ShouldInferAffectedSystem(string? affectedSystem)
     {

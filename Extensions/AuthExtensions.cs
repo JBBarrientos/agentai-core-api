@@ -11,27 +11,31 @@ public static class AuthExtensions
     {
         var region = configuration["AWS:Region"];
         var userPoolId = configuration["Cognito:UserPoolId"];
-        var issuer = $"https://cognito-idp.{region}.amazonaws.com/{userPoolId}";
+        var cognitoConfigured = !string.IsNullOrWhiteSpace(region) && !string.IsNullOrWhiteSpace(userPoolId);
 
-        services
-            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
-            {
-                options.Authority = issuer;
-                options.TokenValidationParameters = new TokenValidationParameters
+        if (cognitoConfigured)
+        {
+            var issuer = $"https://cognito-idp.{region}.amazonaws.com/{userPoolId}";
+            services
+                .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(options =>
                 {
-                    ValidateIssuerSigningKey = true,
-                    ValidateIssuer = true,
-                    ValidIssuer = issuer,
-                    ValidateLifetime = true,
-                    ValidateAudience = false,
-                };
-            });
+                    options.Authority = issuer;
+                    options.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuerSigningKey = true,
+                        ValidateIssuer = true,
+                        ValidIssuer = issuer,
+                        ValidateLifetime = true,
+                        ValidateAudience = false,
+                    };
+                });
 
-        services.AddAuthorizationBuilder()
-            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
-                .RequireAuthenticatedUser()
-                .Build());
+            services.AddAuthorizationBuilder()
+                .SetFallbackPolicy(new AuthorizationPolicyBuilder()
+                    .RequireAuthenticatedUser()
+                    .Build());
+        }
 
         return services;
     }
