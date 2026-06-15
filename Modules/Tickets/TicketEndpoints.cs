@@ -136,7 +136,9 @@ public static class TicketEndpoints
                 NormalizeText(ticket.Number).Contains(term) ||
                 NormalizeText(ticket.Title).Contains(term) ||
                 NormalizeText(ticket.StateLabel).Contains(term) ||
-                NormalizeText(ticket.PriorityLabel).Contains(term));
+                NormalizeText(TraducirEstado(ticket.StateLabel)).Contains(term) ||
+                NormalizeText(ticket.PriorityLabel).Contains(term) ||
+                NormalizeText(TraducirPrioridad(ticket.PriorityLabel)).Contains(term));
         }
 
         return query.OrderByDescending(ticket => ticket.OpenedAt).ToList();
@@ -155,7 +157,8 @@ public static class TicketEndpoints
              ticket.StateLabel.Equals("On Hold", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsEscalated(Ticket ticket)
-        => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase);
+        => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase) &&
+           ticket.StateLabel.Equals("In Progress", StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeSystem(string? system)
     {
@@ -205,6 +208,25 @@ public static class TicketEndpoints
 
     private static bool ContainsAny(string text, params string[] values)
         => values.Any(text.Contains);
+
+    private static string TraducirEstado(string label) => label.Trim() switch
+    {
+        "New"         => "Nuevo",
+        "In Progress" => "En progreso",
+        "On Hold"     => "En espera",
+        "Resolved"    => "Resuelto",
+        "Closed"      => "Cerrado",
+        "Canceled"    => "Cancelado",
+        _             => label
+    };
+
+    private static string TraducirPrioridad(string label) => label.Trim() switch
+    {
+        "High"     => "Alta",
+        "Moderate" => "Moderada",
+        "Low"      => "Baja",
+        _          => label
+    };
 
     private static string NormalizeText(string value)
     {
