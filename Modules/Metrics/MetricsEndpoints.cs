@@ -29,9 +29,8 @@ public static class MetricsEndpoints
                 .Select(g => new
                 {
                     modulo = g.Key,
-                    fallas = g.Count(IsEscalated)
+                    fallas = g.Count()
                 })
-                .Where(g => g.fallas > 0)
                 .OrderByDescending(g => g.fallas)
                 .ToList();
 
@@ -44,6 +43,6 @@ public static class MetricsEndpoints
     }
 
     private static bool IsEscalated(Ticket ticket)
-        => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase) ||
-            ticket.StateLabel.Equals("In Progress - Escalated", StringComparison.OrdinalIgnoreCase);
+        => ticket.AssignmentGroup.Equals("Soporte Nivel 2", StringComparison.OrdinalIgnoreCase) &&
+           ticket.StateLabel.Equals("In Progress", StringComparison.OrdinalIgnoreCase);
 }
