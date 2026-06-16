@@ -67,7 +67,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         var text = message.Text?.Trim();
 
         _logger.LogInformation(
-            "Telegram webhook received message. ChatId={ChatId} Text={Text}",
+            ">>> [MSG]    ChatId={ChatId} | Texto={Text}",
             chatId,
             string.IsNullOrWhiteSpace(text) ? "(empty)" : text);
 
@@ -123,11 +123,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
             var result = await _messageSender.SendToChatAsync(chatId, response, ct: ct);
             _logger.LogInformation(
-                "Telegram ticket lookup response sent. ChatId={ChatId} TicketNumber={TicketNumber} Sent={Sent} Message={Message}",
+                "<<< [SENT]   ChatId={ChatId} | Ticket={TicketNumber} | OK={Sent}",
                 chatId,
                 ticketNumber,
-                result.Sent,
-                result.Message);
+                result.Sent);
         }
         catch (Exception ex)
         {
@@ -271,7 +270,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Telegram webhook saved pending answer but failed while analyzing ticket {TicketNumber}.", pending.Number);
-                    response = $"Gracias. Guarde la informacion en el ticket {pending.Number}, pero no pude completar el analisis automatico para decidir si continua o se escala. Revisa la API/KB y vuelve a intentar.";
+                    response = $"Gracias. Guarde la informacion en el ticket {pending.Number}, pero no pude completar el análisis automático. Por favor, volvé a intentar en unos minutos.";
                 }
             }
 
@@ -369,9 +368,9 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         if (!intakeResult.Succeeded || intakeResult.Decision is null)
         {
             var error = intakeResult.Error ?? "AgenteEntrada no devolvio una decision valida.";
-            _logger.LogWarning("AgenteEntrada failed for ticket {TicketNumber}. Error={Error}", incident.Number, error);
+            _logger.LogWarning("    [ENTRADA !] {TicketNumber} | AgenteEntrada fallo | {Error}", incident.Number, error);
             await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
-            return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: No pude ejecutar AgenteEntrada para validar el caso con KB. Detalle: {error}";
+            return $"Registré tu consulta sobre el ticket {incident.Number}, pero no pude analizarlo automáticamente. Lo derivo a soporte especializado para que lo revisen.";
         }
 
         var decision = intakeResult.Decision;
@@ -381,7 +380,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         {
             var missingField = ParseMissingField(decision.MissingField);
             if (missingField is null)
-                return $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: AgenteEntrada pidio informacion, pero no indico que campo falta.";
+            {
+                _logger.LogWarning("    [ENTRADA !] {TicketNumber} | Decision=ESCALAR | Sin campo faltante especificado", incident.Number);
+                return $"Revisé tu ticket {incident.Number}, pero me falta información para continuar el análisis. Lo derivo a soporte especializado.";
+            }
 
             var intakeState = GetOrCreateIntakeState(chatId, incident);
             if (intakeState.HasCollected(missingField.Value))
@@ -400,9 +402,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 PendingClosures.TryRemove(chatId, out _);
                 ActiveTicketFlows.TryRemove(chatId, out _);
 
+                _logger.LogInformation("    [ESCALAR]   {TicketNumber} | Motivo={Reason} | SN={Updated}", incident.Number, reason, serviceNowUpdated);
                 return serviceNowUpdated
-                    ? $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: {reason}\nEl ticket fue derivado a soporte especializado."
-                    : $"{BuildTicketSummary(incident)}\n\nDecision: ESCALAR\nMotivo: {reason}\nNo pude actualizar ServiceNow con la escalacion, pero la decision es escalar.";
+                    ? $"Revisé tu ticket {incident.Number} y lo derivé a soporte especializado para seguimiento."
+                    : $"Revisé tu ticket {incident.Number} y la decisión es derivarlo a soporte especializado, aunque no pude actualizar el sistema en este momento.";
             }
 
             PendingQuestions[chatId] = new PendingTicketQuestion(incident.Number, incident.SysId, missingField.Value);
@@ -459,19 +462,21 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 _logger.LogWarning(ex, "Could not write escalation decision to ServiceNow for ticket {TicketNumber}.", incident.Number);
             }
 
-            var response = new StringBuilder();
-            response.AppendLine(BuildTicketSummary(incident));
-            response.AppendLine();
-            response.AppendLine("Decision: ESCALAR");
-            response.AppendLine($"Motivo: {reason}");
-            response.AppendLine(updatedServiceNow
-                ? "El ticket fue derivado a soporte especializado."
-                : "No pude actualizar ServiceNow con la escalacion, pero la decision es escalar.");
+            _logger.LogInformation(
+                "    [ESCALAR]   {TicketNumber} | Motivo={Reason} | SN={Updated}",
+                incident.Number, reason, updatedServiceNow);
+            var escalateMsg = !string.IsNullOrWhiteSpace(decision.SuggestedUserMessage)
+                ? decision.SuggestedUserMessage
+                : $"Revisé tu caso y lo derivo a soporte especializado para que lo revisen.";
+            var escalateResponse = new StringBuilder();
+            escalateResponse.AppendLine(escalateMsg);
+            if (!updatedServiceNow)
+                escalateResponse.AppendLine("\nNo pude actualizar el sistema, pero la decisión es derivarlo a soporte especializado.");
             ActiveTicketFlows.TryRemove(chatId, out _);
             PendingClosures.TryRemove(chatId, out _);
             PendingQuestions.TryRemove(chatId, out _);
             await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
-            return response.ToString().Trim();
+            return escalateResponse.ToString().Trim();
         }
 
         var articleCode = string.IsNullOrWhiteSpace(decision.ArticleCode) ? "KB" : decision.ArticleCode;
@@ -479,32 +484,22 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         var continueMessage = $"Revise tu ticket {incident.Number} y AgenteEntrada encontro una solucion aplicable en la KB ({articleCode}). AgentAI puede continuar con el caso.";
         var continueNote = $"AgenteEntrada encontro KB aplicable para {incident.Number}: {articleCode}. Accion recomendada: {recommendedAction}";
 
-        var markedInProgress = true;
         try
         {
             await _serviceNow.MarkInProgressAsync(incident.SysId, continueNote, continueMessage, ct);
         }
         catch (Exception ex)
         {
-            markedInProgress = false;
             _logger.LogWarning(ex, "Could not write continue decision to ServiceNow for ticket {TicketNumber}.", incident.Number);
         }
 
+        _logger.LogInformation(
+            "    [ENTRADA]   {TicketNumber} | Decision={Decision} | KB={ArticleCode} | Confianza={Confidence} | Accion={Action}",
+            incident.Number, decision.Decision, articleCode, decision.Confidence, recommendedAction);
+
         var builder = new StringBuilder();
-        builder.AppendLine(BuildTicketSummary(incident));
-        builder.AppendLine();
-        builder.AppendLine(decision.Decision.Equals("ejecutar_accion", StringComparison.OrdinalIgnoreCase)
-            ? "Decision: EJECUTAR_ACCION"
-            : "Decision: CONTINUAR");
-        builder.AppendLine($"KB: {articleCode}");
-        builder.AppendLine($"Confianza: {decision.Confidence}");
-        builder.AppendLine($"Accion recomendada: {recommendedAction}");
-
         if (!string.IsNullOrWhiteSpace(decision.SuggestedUserMessage))
-            builder.AppendLine($"Mensaje sugerido: {decision.SuggestedUserMessage}");
-
-        if (!markedInProgress)
-            builder.AppendLine("Aviso: no pude actualizar ServiceNow con esta decision, pero el analisis de KB se completo.");
+            builder.AppendLine(decision.SuggestedUserMessage);
 
         if (decision.Decision.Equals("ejecutar_accion", StringComparison.OrdinalIgnoreCase))
         {
@@ -534,12 +529,19 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                     : actionResult.Error ?? "AgenteAccion fallo sin detalle.",
                 ct);
 
-            builder.AppendLine();
-            builder.AppendLine("Ejecucion del agente:");
             var agentSummary = actionResult.Success
                 ? ExtractAgentSummary(actionResult.Output)
-                : $"No pude ejecutar AgenteAccion. Motivo: {actionResult.Error}";
-            builder.AppendLine(agentSummary);
+                : $"No pude ejecutar la accion. Motivo: {actionResult.Error}";
+            _logger.LogInformation(
+                "    [ACCION]    {TicketNumber} | Success={Success} | {Summary}",
+                incident.Number, actionResult.Success, agentSummary);
+
+            var friendlyResult = BuildFriendlyAgentResult(agentSummary, actionResult.Success);
+            if (!string.IsNullOrWhiteSpace(friendlyResult))
+            {
+                builder.AppendLine();
+                builder.AppendLine(friendlyResult);
+            }
 
             if (actionResult.Success && ShouldAskForClosureConfirmation(agentSummary))
             {
@@ -1034,6 +1036,33 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         return lines.Count == 0
             ? "Accion automatica ejecutada correctamente."
             : string.Join(" ", lines);
+    }
+
+    private static string BuildFriendlyAgentResult(string agentSummary, bool success)
+    {
+        if (!success)
+            return "Hubo un inconveniente al procesar la acción automática. Un especialista lo revisará manualmente.";
+
+        // Para el usuario en Telegram: strip prefijos y notas internas, pero MANTENER la password visible
+        var lines = agentSummary
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !line.StartsWith("[AgenteAccion]", StringComparison.OrdinalIgnoreCase))
+            .Select(line => Regex.Replace(line, @"^\[[^\]]+\]\s*", string.Empty).Trim())
+            .Select(line => Regex.Replace(
+                line,
+                @"\s*No cierro el ticket;?\s*queda pendiente de confirmacion del usuario\.?",
+                string.Empty,
+                RegexOptions.IgnoreCase).Trim())
+            .Select(line => Regex.Replace(
+                line,
+                @"\s*Queda pendiente de confirmacion del usuario\.?",
+                string.Empty,
+                RegexOptions.IgnoreCase).Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        return lines.Count == 0 ? string.Empty : string.Join(Environment.NewLine, lines);
     }
 
     private static string SanitizeClosureLine(string line)
