@@ -2,7 +2,6 @@ using System.Text;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.RegularExpressions;
-using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.ServiceNow;
 using AgentAI.Modules.Messages;
 using AgentAI.Modules.Tickets;
@@ -24,7 +23,6 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
     private static readonly ConcurrentDictionary<string, TicketIntakeState> IntakeStates = new();
 
     private readonly IServiceNowConnector _serviceNow;
-    private readonly IKnowledgeBaseService _knowledgeBase;
     private readonly IConfiguration _configuration;
     private readonly ITelegramMessageSender _messageSender;
     private readonly IIncomingMessageService _incomingMessageService;
@@ -37,7 +35,6 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
     public TelegramWebhookService(
         IServiceNowConnector serviceNow,
-        IKnowledgeBaseService knowledgeBase,
         IConfiguration configuration,
         ITelegramMessageSender messageSender,
         IIncomingMessageService incomingMessageService,
@@ -49,7 +46,6 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         ILogger<TelegramWebhookService> logger)
     {
         _serviceNow = serviceNow;
-        _knowledgeBase = knowledgeBase;
         _configuration = configuration;
         _messageSender = messageSender;
         _incomingMessageService = incomingMessageService;
@@ -1251,6 +1247,25 @@ public enum MissingTicketField
     System,
     Email
 }
+
+public sealed record KnowledgeBaseSearchResult(
+    int ArticleId,
+    string ArticleCode,
+    string System,
+    string SystemType,
+    string Tags,
+    string Actions,
+    string Description,
+    string Symptoms,
+    string ProbableCause,
+    string RequiredData,
+    string Preconditions,
+    string RecommendedAction,
+    string Validation,
+    string ExpectedResult,
+    string EscalationCriteria,
+    string SuggestedUserMessage,
+    string Confidence);
 
 public sealed class TicketIntakeState
 {
