@@ -16,7 +16,6 @@ using AgentAI.Modules.AgentSteps;
 using AgentAI.Modules.KbUsages;
 using AgentAI.Modules.ServiceNow;
 using AgentAI.Modules.Notifications;
-using AgentAI.Modules.KnowledgeBase;
 using AgentAI.Modules.AgentActions;
 using AgentAI.Modules.Metrics;
 
@@ -53,7 +52,6 @@ builder.Services.AddMessageModule();
 builder.Services.AddAgentStepModule();
 builder.Services.AddKbUsageModule();
 builder.Services.AddNotificationModule();
-builder.Services.AddKnowledgeBaseModule();
 builder.Services.AddAuthenticationModule(builder.Configuration);
 builder.Services.AddCognitoAuthentication(builder.Configuration);
 
@@ -87,7 +85,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthModule();
 app.MapNotificationModule();
-app.MapKnowledgeBaseModule();
 app.MapAuthenticationModule();
 app.MapTicketModule();
 app.MapConversationModule();
