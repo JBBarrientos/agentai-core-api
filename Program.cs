@@ -1,4 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Serilog;
+using Serilog.Events;
 using AgentAI.Modules.Health;
 using AgentAI.Data;
 using AgentAI.Extensions;
@@ -19,7 +21,17 @@ using AgentAI.Modules.Notifications;
 using AgentAI.Modules.AgentActions;
 using AgentAI.Modules.Metrics;
 
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    .WriteTo.Console(outputTemplate:
+        "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
+
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseSerilog();
 
 // This loads secrets in Development automatically — but only if your project has a UserSecretsId
 // Make sure this is present:

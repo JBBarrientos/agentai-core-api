@@ -67,7 +67,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         var text = message.Text?.Trim();
 
         _logger.LogInformation(
-            "Telegram webhook received message. ChatId={ChatId} Text={Text}",
+            ">>> [MSG]    ChatId={ChatId} | Texto={Text}",
             chatId,
             string.IsNullOrWhiteSpace(text) ? "(empty)" : text);
 
@@ -123,11 +123,10 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
 
             var result = await _messageSender.SendToChatAsync(chatId, response, ct: ct);
             _logger.LogInformation(
-                "Telegram ticket lookup response sent. ChatId={ChatId} TicketNumber={TicketNumber} Sent={Sent} Message={Message}",
+                "<<< [SENT]   ChatId={ChatId} | Ticket={TicketNumber} | OK={Sent}",
                 chatId,
                 ticketNumber,
-                result.Sent,
-                result.Message);
+                result.Sent);
         }
         catch (Exception ex)
         {
@@ -369,7 +368,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         if (!intakeResult.Succeeded || intakeResult.Decision is null)
         {
             var error = intakeResult.Error ?? "AgenteEntrada no devolvio una decision valida.";
-            _logger.LogWarning("AgenteEntrada failed for ticket {TicketNumber}. Decision=ESCALAR Detalle={Error}", incident.Number, error);
+            _logger.LogWarning("    [ENTRADA !] {TicketNumber} | AgenteEntrada fallo | {Error}", incident.Number, error);
             await _agentRunService.UpdateStatusAsync(run.Id, new UpdateAgentRunStatusRequest("failed"), ct);
             return $"Registré tu consulta sobre el ticket {incident.Number}, pero no pude analizarlo automáticamente. Lo derivo a soporte especializado para que lo revisen.";
         }
@@ -382,7 +381,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             var missingField = ParseMissingField(decision.MissingField);
             if (missingField is null)
             {
-                _logger.LogWarning("Ticket {TicketNumber} — Decision=ESCALAR Motivo=AgenteEntrada pidio informacion pero no indico campo faltante.", incident.Number);
+                _logger.LogWarning("    [ENTRADA !] {TicketNumber} | Decision=ESCALAR | Sin campo faltante especificado", incident.Number);
                 return $"Revisé tu ticket {incident.Number}, pero me falta información para continuar el análisis. Lo derivo a soporte especializado.";
             }
 
@@ -403,7 +402,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 PendingClosures.TryRemove(chatId, out _);
                 ActiveTicketFlows.TryRemove(chatId, out _);
 
-                _logger.LogInformation("Ticket {TicketNumber} — Decision=ESCALAR Motivo={Reason} ServiceNowUpdated={Updated}", incident.Number, reason, serviceNowUpdated);
+                _logger.LogInformation("    [ESCALAR]   {TicketNumber} | Motivo={Reason} | SN={Updated}", incident.Number, reason, serviceNowUpdated);
                 return serviceNowUpdated
                     ? $"Revisé tu ticket {incident.Number} y lo derivé a soporte especializado para seguimiento."
                     : $"Revisé tu ticket {incident.Number} y la decisión es derivarlo a soporte especializado, aunque no pude actualizar el sistema en este momento.";
@@ -464,7 +463,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             }
 
             _logger.LogInformation(
-                "Ticket {TicketNumber} — Decision=ESCALAR Motivo={Reason} ServiceNowUpdated={Updated}",
+                "    [ESCALAR]   {TicketNumber} | Motivo={Reason} | SN={Updated}",
                 incident.Number, reason, updatedServiceNow);
             var escalateMsg = !string.IsNullOrWhiteSpace(decision.SuggestedUserMessage)
                 ? decision.SuggestedUserMessage
@@ -495,7 +494,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         }
 
         _logger.LogInformation(
-            "Ticket {TicketNumber} — Decision={Decision} KB={ArticleCode} Confianza={Confidence} Accion={Action}",
+            "    [ENTRADA]   {TicketNumber} | Decision={Decision} | KB={ArticleCode} | Confianza={Confidence} | Accion={Action}",
             incident.Number, decision.Decision, articleCode, decision.Confidence, recommendedAction);
 
         var builder = new StringBuilder();
@@ -534,7 +533,7 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
                 ? ExtractAgentSummary(actionResult.Output)
                 : $"No pude ejecutar la accion. Motivo: {actionResult.Error}";
             _logger.LogInformation(
-                "AgenteAccion result for ticket {TicketNumber}: Success={Success} Summary={Summary}",
+                "    [ACCION]    {TicketNumber} | Success={Success} | {Summary}",
                 incident.Number, actionResult.Success, agentSummary);
 
             var friendlyResult = BuildFriendlyAgentResult(agentSummary, actionResult.Success);
@@ -1044,8 +1043,26 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
         if (!success)
             return "Hubo un inconveniente al procesar la acción automática. Un especialista lo revisará manualmente.";
 
-        var cleaned = BuildClosureActionSummary(agentSummary);
-        return string.IsNullOrWhiteSpace(cleaned) ? string.Empty : cleaned;
+        // Para el usuario en Telegram: strip prefijos y notas internas, pero MANTENER la password visible
+        var lines = agentSummary
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !line.StartsWith("[AgenteAccion]", StringComparison.OrdinalIgnoreCase))
+            .Select(line => Regex.Replace(line, @"^\[[^\]]+\]\s*", string.Empty).Trim())
+            .Select(line => Regex.Replace(
+                line,
+                @"\s*No cierro el ticket;?\s*queda pendiente de confirmacion del usuario\.?",
+                string.Empty,
+                RegexOptions.IgnoreCase).Trim())
+            .Select(line => Regex.Replace(
+                line,
+                @"\s*Queda pendiente de confirmacion del usuario\.?",
+                string.Empty,
+                RegexOptions.IgnoreCase).Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+        return lines.Count == 0 ? string.Empty : string.Join(Environment.NewLine, lines);
     }
 
     private static string SanitizeClosureLine(string line)
