@@ -22,21 +22,21 @@ public class MessageService : IMessageService
     public async Task<Message?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
 
-    public async Task CreateAsync(CreateMessageRequest req, CancellationToken ct = default)
-    {
-        var message = new Message
+        public async Task CreateAsync(CreateMessageRequest req, CancellationToken ct = default)
         {
-            SysId = req.SysId,
-            ConversationId = req.ConversationId,
-            SenderType = req.SenderType,
-            SenderName = req.SenderName,
-            Body = req.Body,
-            MessageType = req.MessageType,
-            SentAt = req.SentAt,
-            LastSyncedAt = DateTime.UtcNow
-        };
-        await _repository.AddAsync(message, ct);
-    }
+            var message = new Message
+            {
+                SysId = req.SysId,
+                ConversationId = req.ConversationId,
+                SenderType = req.SenderType,
+                SenderName = req.SenderName,
+                Body = req.Body,
+                MessageType = req.MessageType,
+                SentAt = req.SentAt,
+                LastSyncedAt = DateTime.UtcNow
+            };
+            await _repository.AddAsync(message, ct);
+        }
 
     public async Task<bool> UpdateAsync(int id, UpdateMessageRequest req, CancellationToken ct = default)
     {
