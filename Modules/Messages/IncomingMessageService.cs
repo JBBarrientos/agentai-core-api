@@ -3,11 +3,13 @@ using AgentAI.Modules.Conversations;
 using AgentAI.Modules.Messages.Dto;
 using AgentAI.Modules.Notifications;
 using AgentAI.Modules.Queue;
+using AgentAI.Modules.Tickets;
 
 namespace AgentAI.Modules.Messages;
 
 public class IncomingMessageService : IIncomingMessageService
 {
+    private readonly ITicketRepository _ticketRepository;
     private readonly IConversationRepository _conversationRepository;
     private readonly IMessageRepository _messageRepository;
     private readonly IQueueService _queueService;
@@ -15,12 +17,14 @@ public class IncomingMessageService : IIncomingMessageService
     private readonly ILogger<IncomingMessageService> _logger;
 
     public IncomingMessageService(
+        ITicketRepository ticketRepository,
         IConversationRepository conversationRepository,
         IMessageRepository messageRepository,
         [FromKeyedServices("inbound")] IQueueService queueService,
         ITelegramMessageSender messageSender,
         ILogger<IncomingMessageService> logger)
     {
+        _ticketRepository = ticketRepository;
         _conversationRepository = conversationRepository;
         _messageRepository = messageRepository;
         _queueService = queueService;
@@ -66,9 +70,16 @@ public class IncomingMessageService : IIncomingMessageService
             return;
         }
 
+        var ticket = await _ticketRepository.GetByIdAsync(conversation.TicketId, ct);
+        if (ticket is null)
+        {
+            _logger.LogWarning("ProcessOutboundAsync: Ticket {TicketId} not found.", conversation.TicketId);
+            return;
+        }
+
         await PersistCoreAsync(new IncomingMessageRequest(
             TicketId: conversation.TicketId,
-            SysId: Guid.NewGuid().ToString(), // TODO: replace with real message SysId if available
+            SysId: ticket.SysId,
             ConversationSysId: conversation.SysId,
             SenderType: "bot",
             SenderName: "Agent",

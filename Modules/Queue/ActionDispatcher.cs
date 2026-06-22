@@ -7,13 +7,16 @@ namespace AgentAI.Modules.Queue;
 public class ActionDispatcher
 {
     private readonly IIncomingMessageService _incomingMessageService;
+    private readonly IQueueService _queueService;
     private readonly ILogger<ActionDispatcher> _logger;
 
     public ActionDispatcher(
         IIncomingMessageService incomingMessageService,
+        [FromKeyedServices("inbound")] IQueueService queueService,
         ILogger<ActionDispatcher> logger)
     {
         _incomingMessageService = incomingMessageService;
+        _queueService = queueService;
         _logger = logger;
     }
 
@@ -27,9 +30,7 @@ public class ActionDispatcher
         return message.Action switch
         {
             "send_message" => HandleSendMessageAsync(message),
-            "send_whatsapp" => HandleWhatsAppAsync(message),
             "send_email" => HandleEmailAsync(message),
-            "escalate" => HandleEscalationAsync(message),
             _ => HandleUnknownAsync(message)
         };
     }
@@ -55,11 +56,6 @@ public class ActionDispatcher
 
         _logger.LogInformation("[SEND_MESSAGE] Persisted bot response for ticket {TicketId}", message.TicketId);
     }
-    private Task HandleWhatsAppAsync(OutboundMessage message)
-    {
-        _logger.LogInformation("[WHATSAPP] Would send message for ticket {TicketId}", message.TicketId);
-        return Task.CompletedTask;
-    }
 
     private Task HandleEmailAsync(OutboundMessage message)
     {
@@ -67,11 +63,6 @@ public class ActionDispatcher
         return Task.CompletedTask;
     }
 
-    private Task HandleEscalationAsync(OutboundMessage message)
-    {
-        _logger.LogInformation("[ESCALACION] Would escalate ticket {TicketId}", message.TicketId);
-        return Task.CompletedTask;
-    }
 
     private Task HandleUnknownAsync(OutboundMessage message)
     {

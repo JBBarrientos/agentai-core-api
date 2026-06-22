@@ -21,28 +21,14 @@ using AgentAI.Modules.Notifications;
 using AgentAI.Modules.AgentActions;
 using AgentAI.Modules.Metrics;
 
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-    .MinimumLevel.Override("System", LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
-    .WriteTo.Console(outputTemplate:
-        "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
-
 var builder = WebApplication.CreateBuilder(args);
-builder.Host.UseSerilog();
 
-// This loads secrets in Development automatically — but only if your project has a UserSecretsId
-// Make sure this is present:
 builder.Configuration
     .AddJsonFile("appsettings.json", optional: false)
     .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true)
-    .AddUserSecrets<Program>(optional: true)  // 👈 Add this explicitly
+    .AddUserSecrets<Program>(optional: true)
     .AddEnvironmentVariables();
 
-// Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -86,8 +72,11 @@ var app = builder.Build();
 app.UseGlobalExceptionHandler();
 app.UseCors("AllowAll");
 
-// Swagger antes de auth para que no quede bloqueado por la política global
-if (app.Environment.IsDevelopment())
+var enableSwagger =
+    builder.Configuration.GetValue<bool?>("Swagger:Enabled")
+    ?? app.Environment.IsDevelopment();
+
+if (enableSwagger)
 {
     app.UseSwagger();
     app.UseSwaggerUI();
@@ -107,39 +96,11 @@ app.MapAgentStepModule();
 app.MapKbUsageModule();
 app.MapMetricsModule();
 
-//app.UseHttpsRedirection();
-
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast")
-.WithOpenApi()
-.RequireAuthorization();
-
-
 if (builder.Configuration.GetValue("Database:MigrateOnStartup", true))
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
-app.Run();
 
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+app.Run();
