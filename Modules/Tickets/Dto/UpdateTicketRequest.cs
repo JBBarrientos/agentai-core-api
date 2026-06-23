@@ -10,5 +10,7 @@ public record UpdateTicketRequest(
     string? AssignedTo,
     string? AssignmentGroup,
     string? AffectedSystem,
-    DateTime? ResolvedAt
+    DateTime? ResolvedAt,
+    string? CreatedByEmail,
+    string? CreatedByName
 );

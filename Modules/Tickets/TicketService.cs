@@ -88,6 +88,8 @@ public class TicketService : ITicketService
         if (req.AssignmentGroup is not null) ticket.AssignmentGroup = req.AssignmentGroup;
         if (req.AffectedSystem is not null) ticket.AffectedSystem = NormalizeAffectedSystem(req.AffectedSystem) ?? string.Empty;
         if (req.ResolvedAt is not null) ticket.ResolvedAt = req.ResolvedAt;
+        if (req.CreatedByEmail is not null) ticket.CreatedByEmail = req.CreatedByEmail;
+        if (req.CreatedByName is not null) ticket.CreatedByName = req.CreatedByName;
 
         ticket.UpdatedAt = DateTime.UtcNow;
         ticket.LastSyncedAt = DateTime.UtcNow;
