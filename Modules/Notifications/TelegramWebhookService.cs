@@ -52,52 +52,64 @@ public sealed partial class TelegramWebhookService : ITelegramWebhookService
             return;
         }
 
-        // 1. Check for existing conversation first
-        var existingConversation = await _conversationService.GetBySysIdAsync(chatId, ct);
-        if (existingConversation is not null)
+        var ticketNumber = ExtractTicketNumber(text ?? string.Empty);
 
+        if (ticketNumber is null)
         {
-            var existingTicket = await _ticketService.GetByIdAsync(existingConversation.TicketId, ct);
-            if (existingTicket is not null)
+            var existingConversation = await _conversationService.GetBySysIdAsync(chatId, ct);
+            if (existingConversation is not null)
             {
-                await _incomingMessageService.ProcessIncomingAsync(new IncomingMessageRequest(
-                        TicketId: existingConversation.TicketId,
-                        SysId: existingTicket.SysId,
-                        ConversationSysId: chatId,
-                        SenderType: "customer",
-                        SenderName: chatId,
-                        Body: text ?? string.Empty,
-                        MessageType: "user_message",
-                        SentAt: DateTime.UtcNow
-                    ), ct);
+                // No hay un ticket number valido y hay una existing conversation
+                var existingTicket = await _ticketService.GetByIdAsync(existingConversation.TicketId, ct);
+                if (existingTicket is not null)
+                {
+                    await _incomingMessageService.ProcessIncomingAsync(new IncomingMessageRequest(
+                            TicketId: existingConversation.TicketId,
+                            SysId: existingTicket.SysId,
+                            ConversationSysId: chatId,
+                            SenderType: "customer",
+                            SenderName: chatId,
+                            Body: text ?? string.Empty,
+                            MessageType: "user_message",
+                            SentAt: DateTime.UtcNow
+                        ), ct);
+                }
+            }
+            else
+            {
+                // No hay un ticket number valido y no hay una existing conversation
+                await _messageSender.SendToChatAsync(chatId, "No pude identificar un numero de ticket. Enviame algo con INC, por ejemplo INC0010024 o inc10024.", ct: ct);
             }
             return;
         }
 
-        // 2. No conversation yet, require ticket number
-        var ticketNumber = ExtractTicketNumber(text ?? string.Empty);
-        if (ticketNumber is null)
-        {
-            await _messageSender.SendToChatAsync(chatId, "No pude identificar un numero de ticket. Enviame algo con INC, por ejemplo INC0010024 o inc10024.", ct: ct);
-            return;
-        }
-
         var ticket = await _ticketService.GetByNumberAsync(ticketNumber, ct);
-        if (ticket is not null)
+
+        if (ticket is null)
         {
+            // Hay un ticket number valido pero el ticket no existe
+            await _messageSender.SendToChatAsync(chatId, "El numero de ticket solicitado no existe. Por favor, verifica el numero y envialo nuevamente.");
+            return;
+        } else
+        {
+            // Hay un ticket number valido, y el ticket existe
+            // Borramos todas las referencias al chat id
+            await _conversationService.ClearSysIdAsync(chatId, ct);
+
+            // Generamos una conversacion nueva y la relacionamos al chatid
             await _incomingMessageService.ProcessIncomingAsync(new IncomingMessageRequest(
-                TicketId: ticket.Id,
-                SysId: ticket.SysId,
-                ConversationSysId: chatId,
-                SenderType: "customer",
-                SenderName: chatId,
-                Body: text ?? string.Empty,
-                MessageType: "user_message",
-                SentAt: DateTime.UtcNow
-            ), ct);
+             TicketId: ticket.Id,
+             SysId: ticket.SysId,
+             ConversationSysId: chatId,
+             SenderType: "customer",
+             SenderName: chatId,
+             Body: text ?? string.Empty,
+             MessageType: "user_message",
+             SentAt: DateTime.UtcNow
+         ), ct);
         }
     }
-    
+
     private static string? ExtractTicketNumber(string text)
     {
         var match = TicketNumberRegex().Match(text);

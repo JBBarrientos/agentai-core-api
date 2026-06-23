@@ -20,10 +20,20 @@ public class ConversationService : IConversationService
         => await _repository.GetByTicketIdAsync(ticketId, ct);
     public async Task<Conversation?> GetBySysIdAsync(string sysId, CancellationToken ct = default)
         => await _repository.GetBySysIdAsync(sysId, ct);
-
+    public async Task<IEnumerable<Conversation>> GetAllBySysIdAsync(string sysId, CancellationToken ct = default) 
+        => await _repository.GetAllBySysIdAsync(sysId, ct);
     public async Task<Conversation?> GetByIdAsync(int id, CancellationToken ct = default)
         => await _repository.GetByIdAsync(id, ct);
+    public async Task ClearSysIdAsync(string sysId, CancellationToken ct)
+    {
+        var conversations = await _repository.GetAllBySysIdAsync(sysId, ct);
 
+        foreach (var conversation in conversations)
+        {
+            conversation.SysId = string.Empty;
+            await _repository.UpdateAsync(conversation, ct);
+        }
+    }
     public async Task CreateAsync(CreateConversationRequest req, CancellationToken ct = default)
     {
         var conversation = new Conversation

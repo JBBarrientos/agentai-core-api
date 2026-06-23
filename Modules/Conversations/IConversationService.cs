@@ -8,6 +8,8 @@ public interface IConversationService
     Task<IEnumerable<Conversation>> GetByTicketIdAsync(int ticketId, CancellationToken ct = default);
     Task<Conversation?> GetByIdAsync(int id, CancellationToken ct = default);
     Task<Conversation?> GetBySysIdAsync(string sysId, CancellationToken ct = default);
+    Task<IEnumerable<Conversation>> GetAllBySysIdAsync(string sysId, CancellationToken ct = default);
+    Task ClearSysIdAsync(string sysId, CancellationToken ct = default);
     Task CreateAsync(CreateConversationRequest request, CancellationToken ct = default);
     Task<bool> UpdateAsync(int id, UpdateConversationRequest request, CancellationToken ct = default);
     Task<bool> DeleteAsync(int id, CancellationToken ct = default);

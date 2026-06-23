@@ -20,6 +20,8 @@ public class ConversationRepository : IConversationRepository
     public async Task<Conversation?> GetBySysIdAsync(string sysId, CancellationToken ct = default)
         => await _db.Conversations.FirstOrDefaultAsync(c => c.SysId == sysId, ct);
 
+    public async Task<IEnumerable<Conversation>> GetAllBySysIdAsync(string sysId, CancellationToken ct = default)
+        => await _db.Conversations.Where(c => c.SysId == sysId).ToListAsync(ct);
     public async Task AddAsync(Conversation conversation, CancellationToken ct = default)
     {
         _db.Conversations.Add(conversation);
