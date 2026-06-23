@@ -253,7 +253,7 @@ public class TicketService : ITicketService
         ticket.Priority = incident.Priority;
         ticket.PriorityLabel = NormalizePriorityLabel(incident.PriorityLabel);
         ticket.CreatedByName = incident.CreatedByName;
-        ticket.CreatedByEmail = incident.CreatedByEmail;
+        ticket.CreatedByEmail = ticket.CreatedByEmail;
         ticket.AssignmentGroup = incident.AssignmentGroup;
         if (ShouldInferAffectedSystem(ticket.AffectedSystem))
             ticket.AffectedSystem = InferAffectedSystem($"{incident.Title} {incident.Description}");
