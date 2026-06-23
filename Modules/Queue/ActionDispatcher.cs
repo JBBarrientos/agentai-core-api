@@ -31,6 +31,7 @@ public class ActionDispatcher
         {
             "send_message" => HandleSendMessageAsync(message),
             "send_email" => HandleEmailAsync(message),
+            "agente_enrutador" => HandleAgenteEnrutadorAsync(message),
             _ => HandleUnknownAsync(message)
         };
     }
@@ -61,6 +62,21 @@ public class ActionDispatcher
     {
         _logger.LogInformation("[EMAIL] Would send email for ticket {TicketId}", message.TicketId);
         return Task.CompletedTask;
+    }
+
+    private async Task HandleAgenteEnrutadorAsync(OutboundMessage message, CancellationToken ct = default)
+    {
+        var inboundMessage = new InboundMessage(
+            TicketId: message.TicketId,
+            CorrelationId: message.CorrelationId,
+            CustomerId: message.CustomerId,
+            Action: "agente_enrutador",
+            Payload: message.Payload
+        );
+
+        await _queueService.SendMessageAsync(JsonSerializer.Serialize(inboundMessage), ct);
+
+        _logger.LogInformation("[AGENTE_ENRUTADOR] Routed ticket {TicketId} to outbound queue", message.TicketId);
     }
 
 
