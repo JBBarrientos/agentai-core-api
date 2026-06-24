@@ -25,7 +25,12 @@ public static class MetricsEndpoints
             var todos = (await repository.GetAllAsync(ct)).ToList();
 
             var fallasPorModulo = todos
-                .GroupBy(t => string.IsNullOrWhiteSpace(t.AffectedSystem) ? "sin clasificar" : t.AffectedSystem)
+                .GroupBy(t =>
+                    !string.IsNullOrWhiteSpace(t.AssignmentGroup)
+                        ? "escalados a nivel 2"
+                        : !string.IsNullOrWhiteSpace(t.AffectedSystem)
+                            ? t.AffectedSystem
+                            : "sin clasificar")
                 .Select(g => new
                 {
                     modulo = g.Key,
