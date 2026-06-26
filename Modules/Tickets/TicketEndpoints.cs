@@ -107,7 +107,7 @@ public static class TicketEndpoints
                 "resueltos" => query.Where(IsResolved),
                 "noresueltos" => query.Where(IsUnresolved),
                 "escalado" or "escalados" => query.Where(IsEscalated),
-                _ => query.Where(ticket => ticket.StateLabel.Equals(estado, StringComparison.OrdinalIgnoreCase))
+                _ => query.Where(ticket => ticket.StateLabel.Equals(estado, StringComparison.OrdinalIgnoreCase) && !IsEscalated(ticket))
             };
         }
 
