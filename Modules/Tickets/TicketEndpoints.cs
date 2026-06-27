@@ -15,12 +15,13 @@ public static class TicketEndpoints
             string? sistema,
             DateOnly? desde,
             DateOnly? hasta,
+            string? tipofecha,
             string? busqueda,
             ITicketService service,
             CancellationToken ct) =>
         {
             var tickets = await service.GetAllAsync(ct);
-            return Results.Ok(FilterTickets(tickets, estado, prioridad, sistema, desde, hasta, busqueda));
+            return Results.Ok(FilterTickets(tickets, estado, prioridad, sistema, desde, hasta, tipofecha, busqueda));
         })
         .AllowAnonymous();
 
@@ -96,6 +97,7 @@ public static class TicketEndpoints
         string? sistema,
         DateOnly? desde,
         DateOnly? hasta,
+        string? tipofecha = null,
         string? busqueda = null)
     {
         var query = tickets;
@@ -117,16 +119,22 @@ public static class TicketEndpoints
         if (!string.IsNullOrWhiteSpace(sistema) && !sistema.Equals("Todos", StringComparison.OrdinalIgnoreCase))
             query = query.Where(ticket => NormalizeSystem(ticket).Equals(NormalizeSystem(sistema), StringComparison.OrdinalIgnoreCase));
 
+        var filtrarPorActualizado = tipofecha?.Trim().ToLowerInvariant() == "actualizado";
+
         if (desde is not null)
         {
             var from = desde.Value.ToDateTime(TimeOnly.MinValue);
-            query = query.Where(ticket => ticket.OpenedAt >= from);
+            query = filtrarPorActualizado
+                ? query.Where(ticket => ticket.UpdatedAt >= from)
+                : query.Where(ticket => ticket.OpenedAt >= from);
         }
 
         if (hasta is not null)
         {
             var to = hasta.Value.ToDateTime(TimeOnly.MaxValue);
-            query = query.Where(ticket => ticket.OpenedAt <= to);
+            query = filtrarPorActualizado
+                ? query.Where(ticket => ticket.UpdatedAt <= to)
+                : query.Where(ticket => ticket.OpenedAt <= to);
         }
 
         if (!string.IsNullOrWhiteSpace(busqueda))
